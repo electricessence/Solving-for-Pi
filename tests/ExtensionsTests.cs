@@ -1,4 +1,6 @@
-﻿namespace SolvePi.Tests;
+﻿using SolvePi.Utils;
+
+namespace SolvePi.Tests;
 
 public class MathExtensionsTests
 {

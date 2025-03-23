@@ -1,4 +1,5 @@
 ﻿using Open.ChannelExtensions;
+using SolvePi.Utils;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -8,27 +9,33 @@ namespace SolvePi.Methods;
 
 public class BBD : AsyncCommand
 {
-	public override async Task<int> ExecuteAsync(CommandContext context)
+	public override async Task<int> ExecuteAsync(CommandContext __)
 	{
 		var rule = new Rule("[bold yellow]Hexidecimal Digits of π[/]");
 		AnsiConsole.Write(rule);
 		AnsiConsole.Write("3.");
 
-		//var bytes = new List<byte>(ushort.MaxValue);
+		var bytes = new List<byte>(ushort.MaxValue);
 
 		const int batchSize = 8;
-		var pool = MemoryPool<byte>.Shared;
 		int currentBatch = 0;
+		var pool = MemoryPool<byte>.Shared;
 		var digits = new ConcurrentDictionary<int, IMemoryOwner<byte>>();
-		var channel = Channel.CreateBounded<(int batch, IMemoryOwner<byte> lease)>(new BoundedChannelOptions(24)
+
+		var channelOptions = new BoundedChannelOptions(24)
 		{
 			SingleWriter = false,
 			SingleReader = true
-		});
+		};
+
+		var channel = Channel
+			.CreateBounded<(int batch, IMemoryOwner<byte> lease)>(channelOptions);
 
 		var stopwatch = Stopwatch.StartNew();
 		_ = Parallel
-			.ForAsync(0, int.MaxValue / batchSize, Program.Cancellation, async (i, _) =>
+			.ForAsync(
+				0, int.MaxValue / batchSize,
+				Program.Cancellation, async (i, _) =>
 			{
 				var lease = pool.Rent(batchSize);
 				{
@@ -40,8 +47,13 @@ public class BBD : AsyncCommand
 					}
 				}
 
+				if(channel.Writer.TryWrite((i, lease)))
+				{
+					await Task.Yield();
+					return;
+				}
+
 				await channel.Writer.WriteAsync((i, lease), CancellationToken.None);
-				await Task.Yield();
 			})
 			.ContinueWith(_ => channel.Writer.Complete());
 
@@ -60,13 +72,19 @@ public class BBD : AsyncCommand
 			}
 			while (digits.TryRemove(currentBatch, out next));
 		});
+		stopwatch.Stop();
 
-		//AnsiConsole.WriteLine();
-		//AnsiConsole.WriteLine("Decimal Result:");
-		//AnsiConsole.Write("3.");
+		AnsiConsole.WriteLine();
+		AnsiConsole.WriteLine();
+		AnsiConsole.WriteLine("Decimal Conversion:");
 
-		//var decimalResult = bytes.HexToFraction();
-		//AnsiConsole.WriteLine(decimalResult.ToDecimal());
+		var decimalResult = 3 + bytes.ByteDigitsToFraction();
+		foreach(char c in decimalResult.ToDecimalChars(bytes.Count * 2))
+		{
+			AnsiConsole.Write(c);
+		}
+
+		AnsiConsole.WriteLine();
 
 		int charCount = currentBatch * batchSize * 2;
 		double seconds = stopwatch.Elapsed.TotalSeconds;
@@ -80,7 +98,7 @@ public class BBD : AsyncCommand
 			using var _ = lease;
 			foreach (byte value in lease.Memory.Span.Slice(0, batchSize))
 			{
-				//bytes.Add(value);
+				bytes.Add(value);
 				AnsiConsole.Write("{0:X2}", value);
 			}
 
