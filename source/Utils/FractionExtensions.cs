@@ -91,6 +91,15 @@ public static class FractionExtensions
 		}
 	}
 
+	public static void WriteToConsole(
+		this IEnumerable<char> chars)
+	{
+		foreach (char b in chars)
+		{
+			AnsiConsole.Write(b);
+		}
+	}
+
 	static readonly BigInteger BaseValue16 = 16;
 
 	public static Fraction ByteDigitsToFraction(

@@ -16,10 +16,17 @@ public static class Program
 	public static async Task<int> Main(string[] args)
 	{
 		string[] localArgs = args;
+
 		// if there are no args, allow for selecting a method from a drop-down.
 		if (args.Length == 0)
 		{
-			string[] methods = [ nameof(BBD) ];
+			string[] methods =
+			[
+				nameof(Archimedes),
+				nameof(BBD),
+				nameof(Chudnovsky)
+			];
+
 			string selectedMethod = AnsiConsole
 				.Prompt(new SelectionPrompt<string>()
 					.Title("Please select a method for solving π:")
@@ -29,15 +36,13 @@ public static class Program
 		}
 
 		var app = new CommandApp();
-		app.Configure(config =>
-		{
-			config.SetApplicationName("SolvePi");
-			config.PropagateExceptions();
-
-			config
-				.AddCommand<BBD>(nameof(BBD))
-				.WithDescription("Compute hex digits of π");
-		});
+		app.Configure(
+			config => config
+				.SetApplicationName("SolvePi")
+				.PropagateExceptions()
+				.AddMethod<Archimedes>()
+				.AddMethod<BBD>()
+				.AddMethod<Chudnovsky>());
 
 		// Start listening for keypresses (non-blocking)
 		var waitForKeyPress = Task.Run(async () =>

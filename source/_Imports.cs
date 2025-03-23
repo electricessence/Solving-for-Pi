@@ -1,5 +1,10 @@
-﻿global using Spectre.Console;
-global using Spectre.Console.Cli;
-global using Fractions;
-global using System.Numerics;
+﻿global using Fractions;
+global using Open.ChannelExtensions;
 global using SolvePi.Utils;
+global using Spectre.Console;
+global using Spectre.Console.Cli;
+global using System.Buffers;
+global using System.Collections.Concurrent;
+global using System.Diagnostics;
+global using System.Numerics;
+global using System.Threading.Channels;

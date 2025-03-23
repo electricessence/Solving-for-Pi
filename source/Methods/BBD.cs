@@ -1,20 +1,15 @@
-﻿using Open.ChannelExtensions;
-using SolvePi.Utils;
-using System.Buffers;
-using System.Collections.Concurrent;
-using System.Diagnostics;
-using System.Threading.Channels;
+﻿namespace SolvePi.Methods;
 
-namespace SolvePi.Methods;
-
-public class BBD : AsyncCommand
+public class BBD : Method<BBD>, IMethod
 {
-	public override async Task<int> ExecuteAsync(CommandContext __)
-	{
-		var rule = new Rule("[bold yellow]Hexidecimal Digits of π[/]");
-		AnsiConsole.Write(rule);
-		AnsiConsole.Write("3.");
+	public static string Name
+		=> "Bailey-Borwein-Plouffe (BBD)";
 
+	public static string Description
+		=> "Compute hexidecimal digits of π";
+
+	protected override async ValueTask ExecuteAsync(CancellationToken cancellationToken)
+	{
 		var bytes = new List<byte>(ushort.MaxValue);
 
 		const int batchSize = 8;
@@ -35,7 +30,7 @@ public class BBD : AsyncCommand
 		_ = Parallel
 			.ForAsync(
 				0, int.MaxValue / batchSize,
-				Program.Cancellation, async (i, _) =>
+				cancellationToken, async (i, _) =>
 			{
 				var lease = pool.Rent(batchSize);
 				{
@@ -55,8 +50,9 @@ public class BBD : AsyncCommand
 
 				await channel.Writer.WriteAsync((i, lease), CancellationToken.None);
 			})
-			.ContinueWith(_ => channel.Writer.Complete());
+			.ContinueWith(_ => channel.Writer.Complete(), CancellationToken.None);
 
+		AnsiConsole.Write("3.");
 		await channel.Reader.ReadAll(e =>
 		{
 			if (e.batch != currentBatch)
@@ -71,18 +67,8 @@ public class BBD : AsyncCommand
 				WriteBatch(next);
 			}
 			while (digits.TryRemove(currentBatch, out next));
-		});
+		}, CancellationToken.None);
 		stopwatch.Stop();
-
-		AnsiConsole.WriteLine();
-		AnsiConsole.WriteLine();
-		AnsiConsole.WriteLine("Decimal Conversion:");
-
-		var decimalResult = 3 + bytes.ByteDigitsToFraction();
-		foreach(char c in decimalResult.ToDecimalChars(bytes.Count * 2))
-		{
-			AnsiConsole.Write(c);
-		}
 
 		AnsiConsole.WriteLine();
 
@@ -91,7 +77,11 @@ public class BBD : AsyncCommand
 		AnsiConsole.WriteLine();
 		AnsiConsole.MarkupLine("[green]Completed {0} hex digits of π in {1:0} seconds = {2:0} per second[/]", charCount, seconds, charCount / seconds);
 
-		return 0;
+		AnsiConsole.WriteLine();
+		AnsiConsole.WriteLine("Decimal Conversion:");
+
+		var decimalResult = 3 + bytes.ByteDigitsToFraction();
+		decimalResult.ToDecimalChars(bytes.Count * 2).WriteToConsole();
 
 		void WriteBatch(IMemoryOwner<byte> lease)
 		{
