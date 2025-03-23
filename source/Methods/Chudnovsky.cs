@@ -20,6 +20,7 @@ public class Chudnovsky : Method<Chudnovsky>, IMethod
 		BigInteger k1 = 545140134, k2 = 13591409, k3 = -640320;
 		BigInteger k4 = 426880, k5 = 10005;
 		Fraction k5sqrt = k5.SquareRoot();
+		Fraction k4Xk5Sqrt = k4 * k5sqrt;
 
 		IEnumerable<char> prevString = [];
 		int length = 1000;
@@ -39,7 +40,7 @@ public class Chudnovsky : Method<Chudnovsky>, IMethod
 
 			AnsiConsole.Write("k = {0} : ", k + 1);
 
-			Fraction pi = k4 * k5sqrt / S;
+			Fraction pi = k4Xk5Sqrt / S;
 			var next = pi.ToDecimalChars(length);
 			next.WriteToConsole();
 			AnsiConsole.WriteLine();
