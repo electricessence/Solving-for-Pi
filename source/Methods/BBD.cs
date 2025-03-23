@@ -125,7 +125,7 @@ public class BBD : AsyncCommand
 		// Sum the series up to n
 		for (int k = 0; k < n; k++)
 		{
-			double denom = 8 * k + m;
+			int denom = 8 * k + m;
 			double pow = n - k;
 			double term = ModPow16(pow, denom);
 			sum += term / denom;
@@ -135,7 +135,7 @@ public class BBD : AsyncCommand
 		// Compute a few terms where k >= n
 		for (int k = n; k <= n + 100; k++)
 		{
-			double denom = 8 * k + m;
+			int denom = 8 * k + m;
 			double term = Math.Pow(16.0, n - k) / denom;
 			if (term < epsilon) break;
 			sum += term;
@@ -145,7 +145,7 @@ public class BBD : AsyncCommand
 		return sum;
 	}
 
-	static double ModPow16(double p, double m)
+	static double ModPow16(double p, int m)
 	{
 		if (m == 1.0) return 0.0;
 
