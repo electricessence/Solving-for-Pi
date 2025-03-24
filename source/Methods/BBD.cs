@@ -1,4 +1,6 @@
-﻿namespace SolvePi.Methods;
+﻿using Open.Collections;
+
+namespace SolvePi.Methods;
 
 public class BBD : Method<BBD>, IMethod
 {
@@ -81,7 +83,7 @@ public class BBD : Method<BBD>, IMethod
 		AnsiConsole.WriteLine("Decimal Conversion:");
 
 		var decimalResult = 3 + bytes.ByteDigitsToFraction();
-		decimalResult.ToDecimalChars(bytes.Count * 2).WriteToConsole();
+		decimalResult.ToDecimalChars(bytes.Count * 2).PreCache(640, CancellationToken.None).WriteToConsole();
 
 		void WriteBatch(IMemoryOwner<byte> lease)
 		{

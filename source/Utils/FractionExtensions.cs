@@ -1,4 +1,6 @@
-﻿namespace SolvePi.Utils;
+﻿using System.Diagnostics.CodeAnalysis;
+
+namespace SolvePi.Utils;
 
 public static class FractionExtensions
 {
@@ -92,11 +94,23 @@ public static class FractionExtensions
 	}
 
 	public static void WriteToConsole(
-		this IEnumerable<char> chars)
+		this IEnumerable<char> chars, int bufferLength = 32)
 	{
+		char[] buffer = new char[bufferLength];
+		int i = 0;
 		foreach (char b in chars)
 		{
-			AnsiConsole.Write(b);
+			buffer[i++] = b;
+			if(i == bufferLength)
+			{
+				Console.Write(buffer);
+				i = 0;
+			}
+		}
+
+		if (i > 0)
+		{
+			Console.Write(buffer, 0, i);
 		}
 	}
 
