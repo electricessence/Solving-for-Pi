@@ -73,12 +73,13 @@ public static class FractionExtensions
 	{
 		var wholePart = (BigInteger)fraction;
 		string wholePartString = wholePart.ToString();
-		if (fraction - wholePart == Fraction.Zero)
+		fraction -= wholePart;
+		if (fraction == Fraction.Zero)
 			return wholePartString;
 
 		return wholePartString
 			.Append('.')
-			.Concat(Remaining(fraction - wholePart, digits));
+			.Concat(Remaining(fraction, digits));
 
 		static IEnumerable<char> Remaining(
 			Fraction fraction, int digits)
@@ -91,6 +92,29 @@ public static class FractionExtensions
 				fraction -= digit;
 			}
 		}
+	}
+
+	public static ReadOnlySpan<char> ToDecimalChars(
+		this Fraction fraction, Span<char> target)
+	{
+		var wholePart = (BigInteger)fraction;
+		string wholePartString = wholePart.ToString();
+		fraction -= wholePart;
+		if (fraction == Fraction.Zero)
+			return wholePartString;
+
+		wholePartString.AsSpan().CopyTo(target);
+		target[wholePartString.Length] = '.';
+
+		for (int i = wholePartString.Length + 1; i < target.Length; i++)
+		{
+			fraction *= 10;
+			int digit = (int)fraction;
+			target[i] = (char)('0' + digit);
+			fraction -= digit;
+		}
+
+		return target;
 	}
 
 	public static void WriteToConsole(
