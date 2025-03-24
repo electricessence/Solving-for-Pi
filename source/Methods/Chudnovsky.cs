@@ -1,4 +1,6 @@
-﻿namespace SolvePi.Methods;
+﻿using Open.Collections;
+
+namespace SolvePi.Methods;
 
 public class Chudnovsky : Method<Chudnovsky>, IMethod
 {
@@ -8,51 +10,86 @@ public class Chudnovsky : Method<Chudnovsky>, IMethod
 	public static string Description
 		=> "Approximate π using Chudnovsky algorithm";
 
-	protected override ValueTask ExecuteAsync(CancellationToken cancellationToken)
-	{
-		const int iter = 100;
+	// constant values
+	private static readonly BigInteger K1 = 545140134, K2 = 13591409, K3 = -640320;
+	private static readonly BigInteger K4 = 426880, K5 = 10005;
+	private static readonly Fraction K5sqrt = K5.SquareRoot();
+	private static readonly Fraction K4Xk5Sqrt = K4 * K5sqrt;
 
+	protected override async ValueTask ExecuteAsync(CancellationToken cancellationToken)
+	{
+		const int batchSize = 60;
+
+		var channelOptions = new BoundedChannelOptions(24)
+		{
+			SingleWriter = false,
+			SingleReader = true
+		};
+
+		var channel = Channel
+			.CreateBounded<Fraction>(channelOptions);
+
+		_ = Parallel
+			.ForAsync(
+				0, int.MaxValue / batchSize,
+				cancellationToken, async (i, _) =>
+				{
+					Fraction batch = Fraction.Zero;
+					{
+						int offset = i * batchSize;
+						for (int j = 0; j < batchSize; j++)
+						{
+							batch += GetIteration(offset + j);
+						}
+					}
+
+					if (channel.Writer.TryWrite(batch))
+					{
+						await Task.Yield();
+						return;
+					}
+
+					await channel.Writer.WriteAsync(batch, CancellationToken.None);
+				})
+			.ContinueWith(_ => channel.Writer.Complete(), CancellationToken.None);
+
+		var pool = ArrayPool<char>.Shared;
+		ArrayPoolSegment<char> prev = pool.RentSegment(8);
+		int length = 1000;
 		Fraction S = 0;
 
-		BigInteger k; // iteration k
-
-		// constant values
-		BigInteger k1 = 545140134, k2 = 13591409, k3 = -640320;
-		BigInteger k4 = 426880, k5 = 10005;
-		Fraction k5sqrt = k5.SquareRoot();
-		Fraction k4Xk5Sqrt = k4 * k5sqrt;
-
-		IEnumerable<char> prevString = [];
-		int length = 1000;
-
-		for (
-			k = 0;
-			!cancellationToken.IsCancellationRequested && k <= iter - 1;
-			k++)
-		{
-			BigInteger numerator
-				= (6 * k).Factorial() * (k1 * k + k2);
-
-			BigInteger denominator
-				= (3 * k).Factorial() * k.Factorial().Pow(3) * k3.Pow(3 * k);
-
-			S += numerator / denominator;
-
-			AnsiConsole.Write("k = {0} : ", k + 1);
-
-			Fraction pi = k4Xk5Sqrt / S;
-			var next = pi.ToDecimalChars(length);
-			next.WriteToConsole();
-			AnsiConsole.WriteLine();
-
-			if (next.SequenceEqual(prevString))
+		await channel.Reader
+			.Pipe(batch => S += batch, 10, false, CancellationToken.None)
+			.Pipe(3, static sum => K4Xk5Sqrt / sum, 10, false, CancellationToken.None)
+			.ReadUntilCancelled(cancellationToken, pi =>
 			{
-				length += 1000;
-			}
+				using var _ = prev;
+				var lease = pool.RentSegment(length);
+				var next = lease.Segment;
+				pi.ToDecimalChars(next.AsSpan());
 
-			prevString = next;
-		}
+				AnsiConsole.WriteLine();
+				Console.WriteLine(next.Array!, next.Offset, next.Count);
+				AnsiConsole.MarkupLine($"[blue]Digits: {length}[/]");
 
-		return default;
+				if (next.Count == prev.Segment.Count
+				&& next.SequenceEqual(prev))
+				{
+					length += 1000;
+				}
+
+				prev = lease;
+			});
+	}
+
+	static Fraction GetIteration(BigInteger k)
+	{
+		BigInteger numerator
+				= (6 * k).Factorial() * (K1 * k + K2);
+
+		BigInteger denominator
+			= (3 * k).Factorial() * k.Factorial().Pow(3) * K3.Pow(3 * k);
+
+		return numerator / denominator;
 	}
 }
