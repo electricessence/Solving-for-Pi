@@ -84,12 +84,15 @@ public static class FractionExtensions
 		static IEnumerable<char> Remaining(
 			Fraction fraction, int digits)
 		{
-			for (int i = 0; i < digits; i++)
+			unchecked
 			{
-				fraction *= 10;
-				int digit = (int)fraction;
-				yield return (char)('0' + digit);
-				fraction -= digit;
+				for (int i = 0; i < digits; i++)
+				{
+					fraction *= 10;
+					int digit = (int)fraction;
+					yield return (char)('0' + digit);
+					fraction -= digit;
+				}
 			}
 		}
 	}
@@ -164,14 +167,37 @@ public static class FractionExtensions
 		return new Fraction(value, denominator);
 	}
 
+	const int MaxDigits = int.MaxValue / 2 - 3;
+
+	// Separate the nibbles.
 	static Fraction CombineDigitsInByte(byte b, int i)
 	{
-		int n = i * 2;
-		// split the digits into two parts
-		int d2 = b % 16;
-		int d1 = (b - d2) / 16;
-		return GetFromDigit(d1, n + 1, BaseValue16)
-			 + GetFromDigit(d2, n + 2, BaseValue16);
+		Debug.Assert(i < MaxDigits, "i is too large");
+		unchecked
+		{
+			// Safe if i is within reasonable bounds for a digit position
+			int n = i * 2;
+			// No overflow risk in these operations as we're working with a byte (0-255)
+			int d1 = (b >> 4) & 0xF;  // High nibble - always 0-15
+			int d2 = b & 0xF;         // Low nibble - always 0-15
+
+			return GetFromDigit(d1, n + 1, BaseValue16)
+				 + GetFromDigit(d2, n + 2, BaseValue16);
+		}
+	}
+
+	// Separate the nibbles.
+	static Fraction CombineDigitsInByte(int b, int i)
+	{
+		int n = i * 8;
+		Fraction result = Fraction.Zero;
+		for (int shift = 0; shift < 32; shift += 4) // Changed from 8 to 32 to process all 8 nibbles
+		{
+			int digit = (b >> shift) & 0xF;
+			result += GetFromDigit(digit, n + (shift / 4) + 1, BaseValue16);
+		}
+
+		return result;
 	}
 
 	public static Fraction Sum(this IEnumerable<Fraction> fractions)
