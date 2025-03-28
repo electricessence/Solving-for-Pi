@@ -24,7 +24,8 @@ public static class Program
 			[
 				nameof(Archimedes),
 				nameof(BBD),
-				nameof(Chudnovsky)
+				nameof(Chudnovsky),
+				nameof(MonteCarlo)
 			];
 
 			string selectedMethod = AnsiConsole
@@ -42,7 +43,8 @@ public static class Program
 				.PropagateExceptions()
 				.AddMethod<Archimedes>()
 				.AddMethod<BBD>()
-				.AddMethod<Chudnovsky>());
+				.AddMethod<Chudnovsky>()
+				.AddMethod<MonteCarlo>());
 
 		// Start listening for keypresses (non-blocking)
 		var waitForKeyPress = Task.Run(async () =>
