@@ -125,7 +125,7 @@ public static class FractionExtensions
 		foreach (char b in chars)
 		{
 			buffer[i++] = b;
-			if(i == bufferLength)
+			if (i == bufferLength)
 			{
 				Console.Write(buffer);
 				i = 0;
@@ -141,26 +141,42 @@ public static class FractionExtensions
 	static readonly BigInteger BaseValue16 = 16;
 
 	public static Fraction ByteDigitsToFraction(
-		this IEnumerable<byte> bytes)
+		this ReadOnlySpan<byte> bytes)
 	{
-		var result = Fraction.Zero;
+		Fraction result = Fraction.Zero;
 
-		int i = 0;
-		foreach (byte b in bytes)
-		{
-			// split the digits into two parts
-			int d2 = b % 16;
-			int d1 = (b - d2) / 16;
-			result += GetFromDigit(d1, ++i, BaseValue16);
-			result += GetFromDigit(d2, ++i, BaseValue16);
-		}
+		int len = bytes.Length;
+		for (int i = 0; i < len; ++i)
+			result += CombineDigitsInByte(bytes[i], i);
 
 		return result;
-
-		static Fraction GetFromDigit(int value, int digit, BigInteger baseValue)
-		{
-			var denominator = baseValue.Pow(digit);
-			return new Fraction(value, denominator);
-		}
 	}
+
+	public static Fraction ByteDigitsToFraction(
+		this IEnumerable<byte> bytes) => bytes
+			//.AsParallel()
+			.Select(CombineDigitsInByte)
+			.Sum();
+
+	static Fraction GetFromDigit(int value, int digit, BigInteger baseValue)
+	{
+		var denominator = baseValue.Pow(digit);
+		return new Fraction(value, denominator);
+	}
+
+	static Fraction CombineDigitsInByte(byte b, int i)
+	{
+		int n = i * 2;
+		// split the digits into two parts
+		int d2 = b % 16;
+		int d1 = (b - d2) / 16;
+		return GetFromDigit(d1, n + 1, BaseValue16)
+			 + GetFromDigit(d2, n + 2, BaseValue16);
+	}
+
+	public static Fraction Sum(this IEnumerable<Fraction> fractions)
+		=> fractions.Aggregate(Fraction.Zero, (a, v) => a + v);
+
+	public static Fraction Sum(this ParallelQuery<Fraction> fractions)
+		=> fractions.Aggregate(Fraction.Zero, (a, v) => a + v);
 }
