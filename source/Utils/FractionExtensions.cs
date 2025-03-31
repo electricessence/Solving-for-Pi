@@ -181,13 +181,10 @@ public static class FractionExtensions
 	{
 		var result = Fraction.Zero;
 		// Read bytes from the channel until completion
-		await bytes.ReadAll((b, i) =>
-		{
-			result += CombineDigitsInByte(b, i);
-			if (i % 10 == 9) result = result.Reduce();
-		});
+		await bytes.ReadAll(
+			(b, i) => result += CombineDigitsInByte(b, i));
 
-		return result.Reduce();
+		return result;
 	}
 
 	public static async ValueTask<Fraction> ByteDigitsToFraction(

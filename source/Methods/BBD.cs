@@ -13,9 +13,8 @@ public class BBD : Method<BBD>, IMethod
 
 	protected override async ValueTask ExecuteAsync(CancellationToken cancellationToken)
 	{
-		var bytes = new List<byte>(ushort.MaxValue);
-
-		const int batchSize = 8;
+		const int batchSize = 16;
+		int byteCount = 0;
 		int currentBatch = 0;
 		var pool = MemoryPool<byte>.Shared;
 		var digits = new ConcurrentDictionary<int, IMemoryOwner<byte>>();
@@ -28,6 +27,14 @@ public class BBD : Method<BBD>, IMethod
 
 		var channel = Channel
 			.CreateBounded<(int batch, IMemoryOwner<byte> lease)>(channelOptions);
+
+		var bytes = Channel.CreateUnbounded<byte>(new UnboundedChannelOptions
+		{
+			SingleWriter = true,
+			SingleReader = false
+		});
+
+		var byteProcessor = bytes.Reader.ByteDigitsToFraction();
 
 		var stopwatch = Stopwatch.StartNew();
 		_ = Parallel
@@ -67,12 +74,22 @@ public class BBD : Method<BBD>, IMethod
 			var next = e.lease;
 			do
 			{
-				WriteBatch(next);
+				var mem = next.Memory;
+				foreach(byte b in mem.Span.Slice(0, batchSize))
+				{
+					if (!bytes.Writer.TryWrite(b))
+						throw new UnreachableException("The bytes channel should be unbound.");
+
+					AnsiConsole.Write("{0:X2}", b);
+				}
+
+				byteCount += batchSize;
+				currentBatch++;
 			}
 			while (digits.TryRemove(currentBatch, out next));
 		}, CancellationToken.None);
 		stopwatch.Stop();
-
+		bytes.Writer.Complete();
 		AnsiConsole.WriteLine();
 
 		int charCount = currentBatch * batchSize * 2;
@@ -83,20 +100,8 @@ public class BBD : Method<BBD>, IMethod
 		AnsiConsole.WriteLine();
 		AnsiConsole.WriteLine("Decimal Conversion:");
 
-		var decimalResult = 3 + bytes.ByteDigitsToFraction();
-		decimalResult.ToDecimalChars(bytes.Count * 2).PreCache(640, CancellationToken.None).WriteToConsole();
-
-		void WriteBatch(IMemoryOwner<byte> lease)
-		{
-			using var _ = lease;
-			foreach (byte value in lease.Memory.Span.Slice(0, batchSize))
-			{
-				bytes.Add(value);
-				AnsiConsole.Write("{0:X2}", value);
-			}
-
-			currentBatch++;
-		}
+		var decimalResult = 3 + await byteProcessor;
+		decimalResult.ToDecimalChars(byteCount * 2).PreCache(640, CancellationToken.None).WriteToConsole();
 	}
 
 	public static byte GetHexDigitOfPi(int n)
