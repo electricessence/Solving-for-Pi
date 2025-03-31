@@ -24,7 +24,7 @@ public class BBD : Method<BBD>, IMethod
 			SingleReader = true
 		});
 
-		var generatedHexDigitOrdered = Channel.CreateUnbounded<byte>(new UnboundedChannelOptions
+		var generatedHexDigitOrdered = Channel.CreateUnbounded<(int batch, IMemoryOwner<byte> lease)>(new UnboundedChannelOptions
 		{
 			SingleWriter = true,
 			SingleReader = false
@@ -32,18 +32,12 @@ public class BBD : Method<BBD>, IMethod
 
 		void AcceptOrderedBatch((int batch, IMemoryOwner<byte> lease) e)
 		{
-			using var next = e.lease; // Ensure we dispose of the memory lease after use.
-			var mem = next.Memory;
-			foreach (byte b in mem.Span)
-			{
-				if (!generatedHexDigitOrdered.Writer.TryWrite(b))
-					throw new UnreachableException("The bytes channel should be unbound.");
-
-				AnsiConsole.Write("{0:X2}", b);
-			}
+			e.lease.Memory.WriteAsHexToConsole();
+			if (!generatedHexDigitOrdered.Writer.TryWrite(e))
+				throw new UnreachableException("The bytes channel should be unbound.");
 		}
 
-		var byteProcessor = generatedHexDigitOrdered.Reader.ByteDigitsToFraction();
+		var byteProcessor = generatedHexDigitOrdered.Reader.ByteDigitsToFraction(batchSize);
 
 		// Start
 		AnsiConsole.Write("3.");
