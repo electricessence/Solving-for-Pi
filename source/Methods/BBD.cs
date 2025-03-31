@@ -1,5 +1,4 @@
 ﻿using Open.Collections;
-using System.Threading.Tasks.Dataflow;
 
 namespace SolvePi.Methods;
 
@@ -13,57 +12,46 @@ public class BBD : Method<BBD>, IMethod
 
 	protected override async ValueTask ExecuteAsync(CancellationToken cancellationToken)
 	{
+		// Prepare
 		const int batchSize = 16;
 		int byteCount = 0;
 		int currentBatch = 0;
-		var pool = MemoryPool<byte>.Shared;
 		var digits = new ConcurrentDictionary<int, IMemoryOwner<byte>>();
 
-		var channelOptions = new BoundedChannelOptions(24)
+		var generatedHexDigitBatches = Channel.CreateBounded<(int batch, IMemoryOwner<byte> lease)>(new BoundedChannelOptions(128)
 		{
 			SingleWriter = false,
 			SingleReader = true
-		};
+		});
 
-		var channel = Channel
-			.CreateBounded<(int batch, IMemoryOwner<byte> lease)>(channelOptions);
-
-		var bytes = Channel.CreateUnbounded<byte>(new UnboundedChannelOptions
+		var generatedHexDigitOrdered = Channel.CreateUnbounded<byte>(new UnboundedChannelOptions
 		{
 			SingleWriter = true,
 			SingleReader = false
 		});
 
-		var byteProcessor = bytes.Reader.ByteDigitsToFraction();
+		var byteProcessor = generatedHexDigitOrdered.Reader.ByteDigitsToFraction();
 
-		var stopwatch = Stopwatch.StartNew();
-		_ = Parallel
-			.ForAsync(
-				0, int.MaxValue / batchSize,
-				cancellationToken, async (i, _) =>
-			{
-				var lease = pool.Rent(batchSize);
-				{
-					int offset = i * batchSize;
-					var span = lease.Memory.Slice(0, batchSize).Span;
-					for (int j = 0; j < batchSize; j++)
-					{
-						span[j] = GetHexByteOfPi(offset + j);
-					}
-				}
-
-				if(channel.Writer.TryWrite((i, lease)))
-				{
-					await Task.Yield();
-					return;
-				}
-
-				await channel.Writer.WriteAsync((i, lease), CancellationToken.None);
-			})
-			.ContinueWith(_ => channel.Writer.Complete(), CancellationToken.None);
-
+		// Start
 		AnsiConsole.Write("3.");
-		await channel.Reader.ReadAll(e =>
+		var stopwatch = Stopwatch.StartNew();
+		_ = GenerateBatches(generatedHexDigitBatches.Writer, batchSize, MemoryPool<byte>.Shared, cancellationToken);
+
+		void AcceptOrderedBatch((int batch, IMemoryOwner<byte> lease) e)
+		{
+			using var next = e.lease; // Ensure we dispose of the memory lease after use.
+			var mem = next.Memory;
+			foreach (byte b in mem.Span)
+			{
+				if (!generatedHexDigitOrdered.Writer.TryWrite(b))
+					throw new UnreachableException("The bytes channel should be unbound.");
+
+				AnsiConsole.Write("{0:X2}", b);
+			}
+		}
+
+		// Ensure batches are in order and write to the bytes channel.
+		await generatedHexDigitBatches.Reader.ReadAll(e =>
 		{
 			if (e.batch != currentBatch)
 			{
@@ -74,22 +62,15 @@ public class BBD : Method<BBD>, IMethod
 			var next = e.lease;
 			do
 			{
-				var mem = next.Memory;
-				foreach(byte b in mem.Span.Slice(0, batchSize))
-				{
-					if (!bytes.Writer.TryWrite(b))
-						throw new UnreachableException("The bytes channel should be unbound.");
-
-					AnsiConsole.Write("{0:X2}", b);
-				}
-
+				AcceptOrderedBatch(e);
 				byteCount += batchSize;
 				currentBatch++;
 			}
 			while (digits.TryRemove(currentBatch, out next));
 		}, CancellationToken.None);
 		stopwatch.Stop();
-		bytes.Writer.Complete();
+
+		generatedHexDigitOrdered.Writer.Complete();
 		AnsiConsole.WriteLine();
 
 		int charCount = currentBatch * batchSize * 2;
@@ -103,6 +84,36 @@ public class BBD : Method<BBD>, IMethod
 		var decimalResult = 3 + await byteProcessor;
 		decimalResult.ToDecimalChars(byteCount * 2).PreCache(640, CancellationToken.None).WriteToConsole();
 	}
+
+	protected static Task GenerateBatches(
+		ChannelWriter<(int batch, IMemoryOwner<byte> lease)> writer,
+		int batchSize,
+		MemoryPool<byte> pool,
+		CancellationToken cancellationToken)
+		=> Parallel
+			.ForAsync(
+				0, int.MaxValue / batchSize,
+				cancellationToken, async (i, _) =>
+				{
+					var lease = pool.Rent(batchSize).Trim(batchSize);
+					{
+						int offset = i * batchSize;
+						var span = lease.Memory.Span;
+						for (int j = 0; j < batchSize; j++)
+						{
+							span[j] = GetHexByteOfPi(offset + j);
+						}
+					}
+
+					if (writer.TryWrite((i, lease)))
+					{
+						await Task.Yield();
+						return;
+					}
+
+					await writer.WriteAsync((i, lease), CancellationToken.None);
+				})
+			.ContinueWith(_ => writer.Complete(), CancellationToken.None);
 
 	public static byte GetHexDigitOfPi(int n)
 	{
