@@ -1,6 +1,4 @@
-﻿using System.Diagnostics.CodeAnalysis;
-
-namespace SolvePi.Utils;
+﻿namespace SolvePi.Utils;
 
 public static class FractionExtensions
 {
@@ -115,6 +113,7 @@ public static class FractionExtensions
 			int digit = (int)fraction;
 			target[i] = (char)('0' + digit);
 			fraction -= digit;
+			fraction = fraction.Reduce();
 		}
 
 		return target;
@@ -155,11 +154,48 @@ public static class FractionExtensions
 		return result;
 	}
 
+	public static Fraction ByteDigitsToFraction(this (int batch, IMemoryOwner<byte> lease) batch, int batchSize)
+	{
+		using var lease = batch.lease;
+		ReadOnlySpan<byte> span = lease.Memory.Span;
+		int start = batchSize * batch.batch;
+
+		var result = Fraction.Zero;
+		int len = span.Length;
+		for (int i = 0; i < len; i++)
+		{
+			result += CombineDigitsInByte(span[i], i + start);
+		}
+
+		return result.Reduce();
+	}
+
+	// Adjust batch size as needed for performance
 	public static Fraction ByteDigitsToFraction(
-		this IEnumerable<byte> bytes) => bytes
-			//.AsParallel()
-			.Select(CombineDigitsInByte)
-			.Sum();
+		this IEnumerable<byte> bytes, int batchSize = 512)
+	{
+		Fraction sum = Fraction.Zero;
+		var sync = new Lock();
+
+		var batches = bytes
+			.BatchFixed(batchSize)
+			.Select((lease, index) => (index, lease));
+
+		// Process each batch of bytes in parallel, but lock on the sum.
+		Parallel.ForEach(batches, batch =>
+		{
+			var result = ByteDigitsToFraction(batch, batchSize);
+			// Lock to safely update the shared sum variable.
+			lock(sync)
+			{
+				// Safely add the result of this batch to the sum.
+				sum += result;
+				sum = sum.Reduce(); // Optional: Reduce the fraction to keep it simplified.
+			}
+		});
+
+		return sum;
+	}
 
 	static Fraction GetFromDigit(int value, int digit, BigInteger baseValue)
 	{
@@ -187,22 +223,35 @@ public static class FractionExtensions
 	}
 
 	// Separate the nibbles.
-	static Fraction CombineDigitsInByte(int b, int i)
-	{
-		int n = i * 8;
-		Fraction result = Fraction.Zero;
-		for (int shift = 0; shift < 32; shift += 4) // Changed from 8 to 32 to process all 8 nibbles
-		{
-			int digit = (b >> shift) & 0xF;
-			result += GetFromDigit(digit, n + (shift / 4) + 1, BaseValue16);
-		}
+	//static Fraction CombineDigitsInByte(int b, int i)
+	//{
+	//	int n = i * 8;
+	//	Fraction result = Fraction.Zero;
+	//	for (int shift = 0; shift < 32; shift += 4) // Changed from 8 to 32 to process all 8 nibbles
+	//	{
+	//		int digit = (b >> shift) & 0xF;
+	//		result += GetFromDigit(digit, n + (shift / 4) + 1, BaseValue16);
+	//	}
 
-		return result;
-	}
+	//	return result;
+	//}
 
 	public static Fraction Sum(this IEnumerable<Fraction> fractions)
 		=> fractions.Aggregate(Fraction.Zero, (a, v) => a + v);
 
 	public static Fraction Sum(this ParallelQuery<Fraction> fractions)
 		=> fractions.Aggregate(Fraction.Zero, (a, v) => a + v);
+
+	public static Fraction Sum(this ReadOnlySpan<Fraction> fractions)
+	{
+		// Sum of Span...
+		var result = Fraction.Zero;
+		int len = fractions.Length;
+		for (int i = 0; i < len; i++)
+		{
+			result += fractions[i];
+		}
+
+		return result;
+	}
 }
