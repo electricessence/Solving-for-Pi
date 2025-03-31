@@ -30,13 +30,6 @@ public class BBD : Method<BBD>, IMethod
 			SingleReader = false
 		});
 
-		var byteProcessor = generatedHexDigitOrdered.Reader.ByteDigitsToFraction();
-
-		// Start
-		AnsiConsole.Write("3.");
-		var stopwatch = Stopwatch.StartNew();
-		_ = GenerateBatches(generatedHexDigitBatches.Writer, batchSize, MemoryPool<byte>.Shared, cancellationToken);
-
 		void AcceptOrderedBatch((int batch, IMemoryOwner<byte> lease) e)
 		{
 			using var next = e.lease; // Ensure we dispose of the memory lease after use.
@@ -49,6 +42,13 @@ public class BBD : Method<BBD>, IMethod
 				AnsiConsole.Write("{0:X2}", b);
 			}
 		}
+
+		var byteProcessor = generatedHexDigitOrdered.Reader.ByteDigitsToFraction();
+
+		// Start
+		AnsiConsole.Write("3.");
+		var stopwatch = Stopwatch.StartNew();
+		_ = GenerateBatches(generatedHexDigitBatches.Writer, batchSize, MemoryPool<byte>.Shared, cancellationToken);
 
 		// Ensure batches are in order and write to the bytes channel.
 		await generatedHexDigitBatches.Reader.ReadAll(e =>
