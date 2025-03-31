@@ -13,26 +13,26 @@ public class BBD : Method<BBD>, IMethod
 	protected override async ValueTask ExecuteAsync(CancellationToken cancellationToken)
 	{
 		// Prepare
-		const int batchSize = 16;
+		const int batchSize = 64;
 		int byteCount = 0;
 		int currentBatch = 0;
-		var digits = new ConcurrentDictionary<int, IMemoryOwner<byte>>();
+		var digits = new ConcurrentDictionary<int, byte[]>();
 
-		var generatedHexDigitBatches = Channel.CreateBounded<(int batch, IMemoryOwner<byte> lease)>(new BoundedChannelOptions(128)
+		var generatedHexDigitBatches = Channel.CreateBounded<(int batch, byte[] bytes)>(new BoundedChannelOptions(128)
 		{
 			SingleWriter = false,
 			SingleReader = true
 		});
 
-		var generatedHexDigitOrdered = Channel.CreateUnbounded<(int batch, IMemoryOwner<byte> lease)>(new UnboundedChannelOptions
+		var generatedHexDigitOrdered = Channel.CreateUnbounded<(int batch, byte[] bytes)>(new UnboundedChannelOptions
 		{
 			SingleWriter = true,
 			SingleReader = false
 		});
 
-		void AcceptOrderedBatch((int batch, IMemoryOwner<byte> lease) e)
+		void AcceptOrderedBatch((int batch, byte[] bytes) e)
 		{
-			e.lease.Memory.WriteAsHexToConsole();
+			e.bytes.AsSpan().WriteAsHexToConsole();
 			if (!generatedHexDigitOrdered.Writer.TryWrite(e))
 				throw new UnreachableException("The bytes channel should be unbound.");
 		}
@@ -42,18 +42,18 @@ public class BBD : Method<BBD>, IMethod
 		// Start
 		AnsiConsole.Write("3.");
 		var stopwatch = Stopwatch.StartNew();
-		_ = GenerateBatches(generatedHexDigitBatches.Writer, batchSize, MemoryPool<byte>.Shared, cancellationToken);
+		_ = GenerateBatches(generatedHexDigitBatches.Writer, batchSize, cancellationToken);
 
 		// Ensure batches are in order and write to the bytes channel.
 		await generatedHexDigitBatches.Reader.ReadAll(e =>
 		{
 			if (e.batch != currentBatch)
 			{
-				digits.TryAdd(e.batch, e.lease);
+				digits.TryAdd(e.batch, e.bytes);
 				return;
 			}
 
-			var next = e.lease;
+			byte[]? next = e.bytes;
 			do
 			{
 				AcceptOrderedBatch(e);
@@ -80,32 +80,31 @@ public class BBD : Method<BBD>, IMethod
 	}
 
 	protected static Task GenerateBatches(
-		ChannelWriter<(int batch, IMemoryOwner<byte> lease)> writer,
+		ChannelWriter<(int batch, byte[] bytes)> writer,
 		int batchSize,
-		MemoryPool<byte> pool,
 		CancellationToken cancellationToken)
 		=> Parallel
 			.ForAsync(
 				0, int.MaxValue / batchSize,
 				cancellationToken, async (i, _) =>
 				{
-					var lease = pool.Rent(batchSize).Trim(batchSize);
+					var bytes = new byte[batchSize];
 					{
 						int offset = i * batchSize;
-						var span = lease.Memory.Span;
+						var span = bytes.AsSpan();
 						for (int j = 0; j < batchSize; j++)
 						{
 							span[j] = GetHexByteOfPi(offset + j);
 						}
 					}
 
-					if (writer.TryWrite((i, lease)))
+					if (writer.TryWrite((i, bytes)))
 					{
 						await Task.Yield();
 						return;
 					}
 
-					await writer.WriteAsync((i, lease), CancellationToken.None);
+					await writer.WriteAsync((i, bytes), CancellationToken.None);
 				})
 			.ContinueWith(_ => writer.Complete(), CancellationToken.None);
 
