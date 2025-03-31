@@ -256,11 +256,10 @@ public static class FractionExtensions
 				using var lease = e.lease;
 				var batchSum = Fraction.Zero;
 				var span = lease.Memory.Span;
-				int len = span.Length;
-				Debug.Assert(len == expectedBatchSize);
+				Debug.Assert(span.Length == expectedBatchSize);
 
 				long offset = e.batch * expectedBatchSize; // Calculate the starting offset for this batch
-				for (int i = 0; i < len; ++i)
+				for (int i = 0; i < expectedBatchSize; ++i)
 					batchSum += CombineDigitsInByte(span[i], offset + i);
 
 				return batchSum.Reduce();
