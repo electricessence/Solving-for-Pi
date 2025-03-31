@@ -1,4 +1,6 @@
-﻿namespace SolvePi.Utils;
+﻿using System.Runtime.CompilerServices;
+
+namespace SolvePi.Utils;
 
 public static class FractionExtensions
 {
@@ -65,6 +67,27 @@ public static class FractionExtensions
 
 		return result;
 	}
+
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public static void WriteAsHexToConsole(this ReadOnlySpan<byte> span)
+	{
+		foreach (byte value in span)
+		{
+			AnsiConsole.Write("{0:X2}", value);
+		}
+	}
+
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public static void WriteAsHexToConsole(this Span<byte> span)
+		=> WriteAsHexToConsole((ReadOnlySpan<byte>)span);
+
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public static void WriteAsHexToConsole(this ReadOnlyMemory<byte> mem)
+		=> WriteAsHexToConsole(mem.Span);
+
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public static void WriteAsHexToConsole(this Memory<byte> mem)
+		=> WriteAsHexToConsole((ReadOnlySpan<byte>)mem.Span);
 
 	public static IEnumerable<char> ToDecimalChars(
 		this Fraction fraction, int digits)
@@ -154,6 +177,139 @@ public static class FractionExtensions
 		return result;
 	}
 
+	public static async ValueTask<Fraction> ByteDigitsToFraction(this ChannelReader<byte> bytes)
+	{
+		var result = Fraction.Zero;
+		// Read bytes from the channel until completion
+		await bytes.ReadAll((b, i) =>
+		{
+			result += CombineDigitsInByte(b, i);
+			if (i % 10 == 9) result = result.Reduce();
+		});
+
+		return result.Reduce();
+	}
+
+	public static async ValueTask<Fraction> ByteDigitsToFraction(
+		this ChannelReader<IMemoryOwner<byte>> bytes)
+	{
+		var result = Fraction.Zero;
+		long offset = 0;
+		// Read bytes from the channel until completion
+		await bytes.ReadAll((lease, batch) =>
+		{
+			using var _ = lease; // Ensure the lease is disposed after use
+			var span = lease.Memory.Span; // Get the span of bytes from the lease
+			int len = span.Length; // Get the length of the current lease
+			for (int i = 0; i < len; ++i)
+				result += CombineDigitsInByte(span[i], offset + i);
+
+			if (batch % 10 == 9) // Optional: Reduce the fraction every 10 batches for performance
+			{
+				// This is just to keep the result manageable and avoid overflow.
+				result = result.Reduce();
+			}
+
+			offset += len; // Increment offset by the length of the current lease
+		});
+
+		return result.Reduce();
+	}
+
+	public static async ValueTask<Fraction> ByteDigitsToFraction(
+		this ChannelReader<IMemoryOwner<byte>> bytes,
+		int expectedBatchSize)
+	{
+		var result = Fraction.Zero;
+		// Read bytes from the channel until completion
+		await bytes.ReadAll((lease, batch) =>
+		{
+			using var _ = lease; // Ensure the lease is disposed after use
+			var span = lease.Memory.Span; // Get the span of bytes from the lease
+			int len = span.Length; // Get the length of the current lease
+			Debug.Assert(len == expectedBatchSize);
+
+			long offset = batch * expectedBatchSize; // Calculate the starting offset for this batch
+			for (int i = 0; i < len; ++i)
+				result += CombineDigitsInByte(span[i], offset + i);
+
+			if (batch % 10 == 9) // Optional: Reduce the fraction every 10 batches for performance
+			{
+				// This is just to keep the result manageable and avoid overflow.
+				result = result.Reduce();
+			}
+		});
+
+		return result.Reduce();
+	}
+
+	public static ValueTask<Fraction> ByteDigitsToFraction(
+		this ChannelReader<(int batch, IMemoryOwner<byte> lease)> bytes)
+		=> bytes.Transform(static e => e.lease).ByteDigitsToFraction();
+
+	public static async ValueTask<Fraction> ByteDigitsToFraction(
+		this ChannelReader<(int batch, IMemoryOwner<byte> lease)> bytes, int expectedBatchSize)
+	{
+		var result = Fraction.Zero;
+		var sync = new Lock();
+		// Read bytes from the channel until completion
+		await bytes
+			.Transform(e =>
+			{
+				using var lease = e.lease;
+				var batchSum = Fraction.Zero;
+				var span = lease.Memory.Span;
+				int len = span.Length;
+				Debug.Assert(len == expectedBatchSize);
+
+				long offset = e.batch * expectedBatchSize; // Calculate the starting offset for this batch
+				for (int i = 0; i < len; ++i)
+					batchSum += CombineDigitsInByte(span[i], offset + i);
+
+				return batchSum.Reduce();
+			})
+			.ReadAllConcurrently(Environment.ProcessorCount, sum =>
+			{
+				lock (sync)
+				{
+					result += sum;
+				}
+			});
+
+		return result.Reduce();
+	}
+
+	public static async ValueTask<Fraction> ByteDigitsToFraction(
+		this ChannelReader<(int batch, byte[] bytes)> bytes, int expectedBatchSize)
+	{
+		var result = Fraction.Zero;
+		var sync = new Lock();
+		// Read bytes from the channel until completion
+		await bytes
+			.Transform(e =>
+			{
+				var batchSum = Fraction.Zero;
+				var span = e.bytes.AsSpan();
+				int len = span.Length;
+				Debug.Assert(len == expectedBatchSize);
+
+				long offset = e.batch * expectedBatchSize; // Calculate the starting offset for this batch
+				for (int i = 0; i < len; ++i)
+					batchSum += CombineDigitsInByte(span[i], offset + i);
+
+				return batchSum.Reduce();
+			})
+			.ReadAllConcurrently(Environment.ProcessorCount, sum =>
+			{
+				lock (sync)
+				{
+					result += sum;
+				}
+			});
+
+		return result.Reduce();
+	}
+
 	public static Fraction ByteDigitsToFraction(this (int batch, IMemoryOwner<byte> lease) batch, int batchSize)
 	{
 		using var lease = batch.lease;
@@ -172,7 +328,7 @@ public static class FractionExtensions
 
 	// Adjust batch size as needed for performance
 	public static Fraction ByteDigitsToFraction(
-		this IEnumerable<byte> bytes, int batchSize = 512)
+		this IEnumerable<byte> bytes, int batchSize = 1024)
 	{
 		Fraction sum = Fraction.Zero;
 		var sync = new Lock();
@@ -186,7 +342,7 @@ public static class FractionExtensions
 		{
 			var result = ByteDigitsToFraction(batch, batchSize);
 			// Lock to safely update the shared sum variable.
-			lock(sync)
+			lock (sync)
 			{
 				// Safely add the result of this batch to the sum.
 				sum += result;
@@ -197,7 +353,7 @@ public static class FractionExtensions
 		return sum;
 	}
 
-	static Fraction GetFromDigit(int value, int digit, BigInteger baseValue)
+	static Fraction GetFromDigit(int value, long digit, BigInteger baseValue)
 	{
 		var denominator = baseValue.Pow(digit);
 		return new Fraction(value, denominator);
@@ -206,13 +362,13 @@ public static class FractionExtensions
 	const int MaxDigits = int.MaxValue / 2 - 3;
 
 	// Separate the nibbles.
-	static Fraction CombineDigitsInByte(byte b, int i)
+	static Fraction CombineDigitsInByte(byte b, long i)
 	{
 		Debug.Assert(i < MaxDigits, "i is too large");
 		unchecked
 		{
 			// Safe if i is within reasonable bounds for a digit position
-			int n = i * 2;
+			long n = i * 2;
 			// No overflow risk in these operations as we're working with a byte (0-255)
 			int d1 = (b >> 4) & 0xF;  // High nibble - always 0-15
 			int d2 = b & 0xF;         // Low nibble - always 0-15
