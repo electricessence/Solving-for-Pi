@@ -1,4 +1,6 @@
-﻿using System.Runtime.CompilerServices;
+﻿using Nito.AsyncEx;
+using System.Runtime.CompilerServices;
+using System.Threading;
 
 namespace SolvePi.Utils;
 
@@ -245,10 +247,11 @@ public static class FractionExtensions
 		=> bytes.Transform(static e => e.lease).ByteDigitsToFraction();
 
 	public static async ValueTask<Fraction> ByteDigitsToFraction(
-		this ChannelReader<(int batch, IMemoryOwner<byte> lease)> bytes, int expectedBatchSize)
+		this ChannelReader<(int batch, IMemoryOwner<byte> lease)> bytes, int expectedBatchSize, CancellationToken cancellationToken = default)
 	{
 		var result = Fraction.Zero;
-		var sync = new Lock();
+		var sync = new AsyncLock();
+
 		// Read bytes from the channel until completion
 		await bytes
 			.Transform(e =>
@@ -264,23 +267,22 @@ public static class FractionExtensions
 
 				return batchSum.Reduce();
 			})
-			.ReadAllConcurrently(Environment.ProcessorCount, sum =>
+			.ReadAllConcurrentlyAsync(Environment.ProcessorCount, async (sum) =>
 			{
-				lock (sync)
-				{
-					result += sum;
-				}
-			});
+				using var _ = await sync.LockAsync(cancellationToken);
+				result += sum;
+			}, cancellationToken: cancellationToken);
 
 		return result.Reduce();
 	}
 
 	public static async ValueTask<Fraction> ByteDigitsToFraction(
-		this ChannelReader<(int batch, byte[] bytes)> bytes, int expectedBatchSize)
+		this ChannelReader<(int batch, byte[] bytes)> bytes, int expectedBatchSize, CancellationToken cancellationToken = default)
 	{
 		var result = Fraction.Zero;
-		var sync = new Lock();
+		var sync = new AsyncLock();
 		// Read bytes from the channel until completion
+
 		await bytes
 			.Transform(e =>
 			{
@@ -295,13 +297,11 @@ public static class FractionExtensions
 
 				return batchSum.Reduce();
 			})
-			.ReadAllConcurrently(Environment.ProcessorCount, sum =>
+			.ReadAllConcurrentlyAsync(Environment.ProcessorCount, async (sum) =>
 			{
-				lock (sync)
-				{
-					result += sum;
-				}
-			});
+				using var _ = await sync.LockAsync(cancellationToken);
+				result += sum;
+			}, cancellationToken: cancellationToken);
 
 		return result.Reduce();
 	}
@@ -323,7 +323,7 @@ public static class FractionExtensions
 	}
 
 	// Adjust batch size as needed for performance
-	public static Fraction ByteDigitsToFraction(
+	public static async ValueTask<Fraction> ByteDigitsToFraction(
 		this IEnumerable<byte> bytes, int batchSize = 1024)
 	{
 		Fraction sum = Fraction.Zero;
@@ -333,17 +333,17 @@ public static class FractionExtensions
 			.BatchFixed(batchSize)
 			.Select((lease, index) => (index, lease));
 
+		var asyncLock = new AsyncLock();
+
 		// Process each batch of bytes in parallel, but lock on the sum.
-		Parallel.ForEach(batches, batch =>
+		await Parallel.ForEachAsync(batches, async (batch, ct) =>
 		{
 			var result = ByteDigitsToFraction(batch, batchSize);
 			// Lock to safely update the shared sum variable.
-			lock (sync)
-			{
-				// Safely add the result of this batch to the sum.
-				sum += result;
-				sum = sum.Reduce(); // Optional: Reduce the fraction to keep it simplified.
-			}
+			using var _ = await asyncLock.LockAsync(ct);
+			// Safely add the result of this batch to the sum.
+			sum += result;
+			sum = sum.Reduce(); // Optional: Reduce the fraction to keep it simplified.
 		});
 
 		return sum;

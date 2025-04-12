@@ -6,13 +6,14 @@ internal static class CollectionExtensions
 	{
 		public Memory<T> Memory { get; } = original.Memory.Slice(0, length);
 
-		public void Dispose() => original.Dispose();
+		public void Dispose()
+			=> original.Dispose();
 	}
 
 	public static IMemoryOwner<T> Trim<T>(this IMemoryOwner<T> original, int length)
 	{
 		Debug.Assert(length > 0);
-		return original.Memory.Length > length ? new ShortBatch<T>(original, length) : original;
+		return new ShortBatch<T>(original, length);// original.Memory.Length > length ? new ShortBatch<T>(original, length) : original;
 	}
 
 	public static IEnumerable<IMemoryOwner<T>> Batch<T>(
