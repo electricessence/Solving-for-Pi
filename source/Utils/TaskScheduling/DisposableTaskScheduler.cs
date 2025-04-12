@@ -41,4 +41,30 @@ public abstract class DisposableTaskScheduler : TaskScheduler, IDisposable
 			&& (!taskWasPreviouslyQueued || TryDequeue(task))
 			&& TryExecuteTask(task);
 	}
+
+	public Task Run(
+		Func<Task> taskFactory,
+		TaskCreationOptions options = TaskCreationOptions.None,
+		CancellationToken cancellationToken = default)
+		=> _wasDisposed == 0
+		? Task.Factory.StartNew(taskFactory, cancellationToken, options, this).Unwrap()
+		: throw new ObjectDisposedException(GetType().Name);
+
+	public Task<T> Run<T>(
+		Func<Task<T>> taskFactory,
+		TaskCreationOptions options = TaskCreationOptions.None,
+		CancellationToken cancellationToken = default)
+		=> _wasDisposed == 0
+		? Task.Factory.StartNew(taskFactory, cancellationToken, options, this).Unwrap()
+		: throw new ObjectDisposedException(GetType().Name);
+
+	public Task Run(
+		Func<Task> taskFactory,
+		CancellationToken cancellationToken)
+		=> Run(taskFactory, TaskCreationOptions.None, cancellationToken);
+
+	public Task<T> Run<T>(
+		Func<Task<T>> taskFactory,
+		CancellationToken cancellationToken)
+		=> Run(taskFactory, TaskCreationOptions.None, cancellationToken);
 }

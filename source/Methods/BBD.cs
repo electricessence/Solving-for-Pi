@@ -1,4 +1,6 @@
-﻿using Open.Collections;
+﻿using Nito.AsyncEx;
+using Open.Collections;
+using SolvePi.Utils.TaskScheduling;
 
 namespace SolvePi.Methods;
 
@@ -30,7 +32,12 @@ public class BBD : Method<BBD>, IMethod
 			SingleReader = false
 		});
 
-		var byteProcessor = generatedHexDigitOrdered.Reader.ByteDigitsToFraction(batchSize, CancellationToken.None);
+		var scheduler = new PriorityQueueTaskScheduler();
+
+		var byteProcessor = scheduler[0].Run(
+			()=> generatedHexDigitOrdered.Reader.ByteDigitsToFraction(batchSize, CancellationToken.None).AsTask(),
+			CancellationToken.None);
+
 		Task decimalOutput = Task.CompletedTask;
 		await AnsiConsole.Status()
 			.Spinner(Spinner.Known.Dots)
@@ -41,7 +48,9 @@ public class BBD : Method<BBD>, IMethod
 				//ctx.Status("Starting...");
 
 				var stopwatch = Stopwatch.StartNew();
-				_ = GenerateBatches(generatedHexDigitBatches.Writer, batchSize, cancellationToken);
+				_ = scheduler[1].Run(
+					()=> GenerateBatches(generatedHexDigitBatches.Writer, batchSize, cancellationToken),
+					CancellationToken.None);
 
 				// Ensure batches are in order and write to the bytes channel.
 				await generatedHexDigitBatches.Reader.ReadAll(e =>
@@ -87,7 +96,7 @@ public class BBD : Method<BBD>, IMethod
 
 				ctx.Status("Starting...");
 				stopwatch.Restart();
-				var decimalResult = 3 + await byteProcessor;
+				Fraction decimalResult = 3 + await byteProcessor;
 
 				decimalOutput = Task.Run(() =>
 				{
@@ -121,10 +130,10 @@ public class BBD : Method<BBD>, IMethod
 				0, int.MaxValue / batchSize,
 				cancellationToken, async (i, _) =>
 				{
-					var bytes = new byte[batchSize];
+					byte[] bytes = new byte[batchSize];
 					{
 						int offset = i * batchSize;
-						var span = bytes.AsSpan();
+						Span<byte> span = bytes.AsSpan();
 						for (int j = 0; j < batchSize; j++)
 						{
 							span[j] = GetHexByteOfPi(offset + j);
