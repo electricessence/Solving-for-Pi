@@ -144,18 +144,20 @@ public static class FractionExtensions
 		return target;
 	}
 
-	public static void WriteToConsole(
+	public static long WriteToConsole(
 		this IEnumerable<char> chars, int bufferLength = 32)
 	{
 		char[] buffer = new char[bufferLength];
 		int i = 0;
+		long total = 0;
 		foreach (char b in chars)
 		{
+			total++;
 			buffer[i++] = b;
 			if (i == bufferLength)
 			{
-				Console.Write(buffer);
 				i = 0;
+				Console.Write(buffer);
 			}
 		}
 
@@ -163,6 +165,8 @@ public static class FractionExtensions
 		{
 			Console.Write(buffer, 0, i);
 		}
+
+		return total;
 	}
 
 	static readonly BigInteger BaseValue16 = 16;

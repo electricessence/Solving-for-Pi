@@ -30,53 +30,86 @@ public class BBD : Method<BBD>, IMethod
 			SingleReader = false
 		});
 
-		void AcceptOrderedBatch((int batch, byte[] bytes) e)
-		{
-			e.bytes.AsSpan().WriteAsHexToConsole();
-			if (!generatedHexDigitOrdered.Writer.TryWrite(e))
-				throw new UnreachableException("The bytes channel should be unbound.");
-		}
-
-		var byteProcessor = generatedHexDigitOrdered.Reader.ByteDigitsToFraction(batchSize);
-
-		// Start
-		AnsiConsole.Write("3.");
-		var stopwatch = Stopwatch.StartNew();
-		_ = GenerateBatches(generatedHexDigitBatches.Writer, batchSize, cancellationToken);
-
-		// Ensure batches are in order and write to the bytes channel.
-		await generatedHexDigitBatches.Reader.ReadAll(e =>
-		{
-			if (e.batch != currentBatch)
+		var byteProcessor = generatedHexDigitOrdered.Reader.ByteDigitsToFraction(batchSize, CancellationToken.None);
+		Task decimalOutput = Task.CompletedTask;
+		await AnsiConsole.Status()
+			.Spinner(Spinner.Known.Dots)
+			.StartAsync("Starting...", async ctx =>
 			{
-				digits.TryAdd(e.batch, e.bytes);
-				return;
-			}
+				// Start
+				//AnsiConsole.Write("3.");
+				//ctx.Status("Starting...");
 
-			byte[]? next = e.bytes;
-			do
-			{
-				AcceptOrderedBatch(e);
-				byteCount += batchSize;
-				currentBatch++;
-			}
-			while (digits.TryRemove(currentBatch, out next));
-		}, CancellationToken.None);
-		stopwatch.Stop();
+				var stopwatch = Stopwatch.StartNew();
+				_ = GenerateBatches(generatedHexDigitBatches.Writer, batchSize, cancellationToken);
 
-		generatedHexDigitOrdered.Writer.Complete();
-		AnsiConsole.WriteLine();
+				// Ensure batches are in order and write to the bytes channel.
+				await generatedHexDigitBatches.Reader.ReadAll(e =>
+				{
+					if (e.batch != currentBatch)
+					{
+						digits.TryAdd(e.batch, e.bytes);
+						return;
+					}
 
-		int charCount = currentBatch * batchSize * 2;
-		double seconds = stopwatch.Elapsed.TotalSeconds;
-		AnsiConsole.WriteLine();
-		AnsiConsole.MarkupLine("[green]Completed {0} hex digits of π in {1:0} seconds = {2:0} per second[/]", charCount, seconds, charCount / seconds);
+					byte[]? next = e.bytes;
+					do
+					{
+						AcceptOrderedBatch(e);
+						byteCount += batchSize;
+						currentBatch++;
+						ctx.Status($"{byteCount:#,###} bytes (batch {currentBatch:#,###})");
+					}
+					while (digits.TryRemove(currentBatch, out next));
 
-		AnsiConsole.WriteLine();
-		AnsiConsole.WriteLine("Decimal Conversion:");
+					void AcceptOrderedBatch((int batch, byte[] bytes) e)
+					{
+						// e.bytes.AsSpan().WriteAsHexToConsole();
+						if (!generatedHexDigitOrdered.Writer.TryWrite(e))
+							throw new UnreachableException("The bytes channel should be unbound.");
+					}
+				}, CancellationToken.None);
+				stopwatch.Stop();
 
-		var decimalResult = 3 + await byteProcessor;
-		decimalResult.ToDecimalChars(byteCount * 2).PreCache(640, CancellationToken.None).WriteToConsole();
+				ctx.Status("Stopped hex proccessing.");
+				generatedHexDigitOrdered.Writer.Complete();
+				AnsiConsole.WriteLine();
+
+				int charCount = currentBatch * batchSize * 2;
+				double seconds = stopwatch.Elapsed.TotalSeconds;
+				AnsiConsole.WriteLine();
+				AnsiConsole.MarkupLine(
+					"[green]Completed {0:#,###} hex digits of π in {1:#,###} seconds = {2:#,###} per second[/]",
+					charCount, seconds, charCount / seconds);
+
+				AnsiConsole.WriteLine();
+				AnsiConsole.MarkupLine("[cyan]Decimal Conversion:[/]");
+
+				ctx.Status("Starting...");
+				stopwatch.Restart();
+				var decimalResult = 3 + await byteProcessor;
+
+				decimalOutput = Task.Run(() =>
+				{
+					long total = decimalResult
+						.ToDecimalChars(byteCount * 2)
+						.PreCache(640, CancellationToken.None)
+						.WriteToConsole() - 2;
+
+					double totalSeconds = seconds;
+					stopwatch.Stop();
+					seconds = stopwatch.Elapsed.TotalSeconds;
+					totalSeconds += seconds;
+					AnsiConsole.WriteLine(); // End of digits.
+					AnsiConsole.WriteLine(); // Spacer.
+					AnsiConsole.MarkupLine(
+						"[green]Completed {0:#,###} decimal digits of π in {1:#,###} seconds = {2:#,###} per second[/]",
+						total, seconds, total / seconds);
+					AnsiConsole.WriteLine("{0:#,###} total seconds", totalSeconds);
+				});
+			});
+
+		await decimalOutput;
 	}
 
 	protected static Task GenerateBatches(
