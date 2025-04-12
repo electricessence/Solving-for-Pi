@@ -251,10 +251,11 @@ public static class FractionExtensions
 		=> bytes.Transform(static e => e.lease).ByteDigitsToFraction();
 
 	public static async ValueTask<Fraction> ByteDigitsToFraction(
-		this ChannelReader<(int batch, IMemoryOwner<byte> lease)> bytes, int expectedBatchSize, CancellationToken cancellationToken = default)
+		this ChannelReader<(int batch, IMemoryOwner<byte> lease)> bytes,
+		int expectedBatchSize,
+		CancellationToken cancellationToken = default)
 	{
 		var result = Fraction.Zero;
-		var sync = new AsyncLock();
 
 		// Read bytes from the channel until completion
 		await bytes
@@ -271,22 +272,20 @@ public static class FractionExtensions
 
 				return batchSum.Reduce();
 			})
-			.ReadAllConcurrentlyAsync(Environment.ProcessorCount, async (sum) =>
-			{
-				using var _ = await sync.LockAsync(cancellationToken);
-				result += sum;
-			}, cancellationToken: cancellationToken);
+			// Pipe the results in parallel to another channel.
+			.Pipe(Environment.ProcessorCount, sum => sum, singleReader: true, cancellationToken: cancellationToken)
+			// Read the resultant values one at a time and create a sum.
+			.ReadAll(sum => result += sum, cancellationToken);
 
 		return result.Reduce();
 	}
 
 	public static async ValueTask<Fraction> ByteDigitsToFraction(
-		this ChannelReader<(int batch, byte[] bytes)> bytes, int expectedBatchSize, CancellationToken cancellationToken = default)
+		this ChannelReader<(int batch, byte[] bytes)> bytes,
+		int expectedBatchSize,
+		CancellationToken cancellationToken = default)
 	{
 		var result = Fraction.Zero;
-		var sync = new AsyncLock();
-		// Read bytes from the channel until completion
-
 		await bytes
 			.Transform(e =>
 			{
@@ -301,11 +300,10 @@ public static class FractionExtensions
 
 				return batchSum.Reduce();
 			})
-			.ReadAllConcurrentlyAsync(Environment.ProcessorCount, async (sum) =>
-			{
-				using var _ = await sync.LockAsync(cancellationToken);
-				result += sum;
-			}, cancellationToken: cancellationToken);
+			// Pipe the results in parallel to another channel.
+			.Pipe(Environment.ProcessorCount, sum => sum, singleReader: true, cancellationToken: cancellationToken)
+			// Read the resultant values one at a time and create a sum.
+			.ReadAll(sum => result += sum, cancellationToken);
 
 		return result.Reduce();
 	}

@@ -1,6 +1,4 @@
-﻿using Fractions;
-using Nito.AsyncEx;
-using Open.Collections;
+﻿using Open.Collections;
 using SolvePi.Utils.TaskScheduling;
 
 namespace SolvePi.Methods;
@@ -90,64 +88,67 @@ public class BBD : Method<BBD>, IMethod
 			AnsiConsole.WriteLine();
 
 			int charCount = currentBatch * batchSize * 2;
+
 			double seconds = stopwatch.Elapsed.TotalSeconds;
+			double totalSeconds = seconds;
+
 			AnsiConsole.WriteLine();
 			AnsiConsole.MarkupLine(
 				"[green]Completed {0:#,###} hex digits of π in {1:#,###} seconds = {2:#,###} per second[/]",
 				charCount, seconds, charCount / seconds);
 
-			AnsiConsole.WriteLine();
-			AnsiConsole.MarkupLine("[cyan]Decimal Conversion:[/]");
-
-			ctx.Status("Starting...");
+			ctx.Status("Computing final value...");
 			stopwatch.Restart();
-			Fraction decimalResult = 3 + await byteProcessor;
+			bool computing = true;
+			_ = Task.Run(() =>
+			{
+				// Update elapsed status while processing.
+				while (computing)
+				{
+					// Show elapsed time as 0:00:00.
+					ctx.Status($"Computing final value. Elaspsed: {stopwatch.Elapsed:hh\\:mm\\:ss}");
+					Task.Delay(500);
+				}
+			});
 
-			// Larger than 3.15 signifies that something is wrong.
-			Debug.Assert(decimalResult < (Fraction)3.15);
+			Fraction pi = 3 + await byteProcessor;
+			computing = false;
+			stopwatch.Stop();
+
+			seconds = stopwatch.Elapsed.TotalSeconds;
+			totalSeconds += seconds;
+
+			AnsiConsole.MarkupLine("[green]Final value compute time: {0:hh\\:mm\\:ss} = {1:#,###} per second[/]",
+				stopwatch.Elapsed, charCount / seconds);
 
 			decimalOutput = Task.Run(() =>
 			{
-				long total = decimalResult
+#if DEBUG
+				// Larger than 3.15 signifies that something is wrong.
+				decimal dr = pi.ToDecimal();
+				if (dr > 3.15m)
+				{
+					AnsiConsole.MarkupLine("[red]The result was greater than 3.15: {0}[/]", dr);
+					return;
+				}
+#endif
+				AnsiConsole.WriteLine();
+				AnsiConsole.MarkupLine("[cyan]Decimal Conversion:[/]");
+
+				stopwatch.Restart();
+				long total = pi
 					.ToDecimalChars(byteCount * 2)
 					.PreCache(640, CancellationToken.None)
-#if DEBUG
-					// Sometimes the conversion looks as if the digits are doubled.
-					// This is a test to ensure that the conversion is correct.	
-					.Select((c, i) =>
-					{
-						switch(i)
-						{
-							case 0:
-								Debug.Assert(c == '3');
-								break;
-
-							case 1:
-								Debug.Assert(c == '.');
-								break;
-
-							case 2:
-								Debug.Assert(c == '1');
-								break;
-
-							case 3:
-								Debug.Assert(c == '4');
-								break;
-						}
-
-						return c;
-					})
-#endif
 					.WriteToConsole() - 2;
-
-				double totalSeconds = seconds;
 				stopwatch.Stop();
+
 				seconds = stopwatch.Elapsed.TotalSeconds;
 				totalSeconds += seconds;
+
 				AnsiConsole.WriteLine(); // End of digits.
 				AnsiConsole.WriteLine(); // Spacer.
 				AnsiConsole.MarkupLine(
-					"[green]Completed {0:#,###} decimal digits of π in {1:#,###} seconds = {2:#,###} per second[/]",
+					"[green]Converted {0:#,###} decimal digits of π in {1:#,###} seconds = {2:#,###} per second[/]",
 					total, seconds, total / seconds);
 				AnsiConsole.WriteLine("{0:#,###} total seconds", totalSeconds);
 			});
@@ -177,7 +178,6 @@ public class BBD : Method<BBD>, IMethod
 
 					if (writer.TryWrite((i, bytes)))
 					{
-						await Task.Yield();
 						return;
 					}
 
