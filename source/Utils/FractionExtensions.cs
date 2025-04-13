@@ -193,7 +193,6 @@ public static partial class FractionExtensions
 		return result;
 	}
 
-
 	public static async ValueTask<Fraction> ByteDigitsToFraction(
 		this ChannelReader<(int batch, byte[] bytes)> bytes,
 		int expectedBatchSize,
@@ -221,7 +220,6 @@ public static partial class FractionExtensions
 
 		return result.Reduce();
 	}
-
 
 	// Adjust batch size as needed for performance
 	public static async ValueTask<Fraction> ByteDigitsToFraction(

@@ -1,5 +1,6 @@
 ﻿using Open.Collections;
 using SolvePi.Utils.TaskScheduling;
+using System.Collections.Immutable;
 
 namespace SolvePi.Methods;
 
@@ -10,6 +11,12 @@ public class BBD : Method<BBD>, IMethod
 
 	public static string Description
 		=> "Compute hexidecimal digits of π";
+
+	private const string FirstHexDigits
+		= "243F6A8885A308D313198A2E037073";
+
+	public static ImmutableArray<byte> FirstHexDigitBytes
+		=> [.. ConvertHexStringToBytes(FirstHexDigits)];
 
 	protected override async ValueTask ExecuteAsync(CancellationToken cancellationToken)
 	{
@@ -68,7 +75,7 @@ public class BBD : Method<BBD>, IMethod
 				byte[]? next = e.bytes;
 				do
 				{
-					AcceptOrderedBatch(e);
+					AcceptOrderedBatch((currentBatch, next));
 					byteCount += batchSize;
 					currentBatch++;
 					ctx.Status($"Batch {currentBatch:#,###}: {byteCount:#,###} bytes ({byteCount / stopwatch.Elapsed.TotalSeconds:#,###} per second)");
@@ -77,6 +84,16 @@ public class BBD : Method<BBD>, IMethod
 
 				void AcceptOrderedBatch((int batch, byte[] bytes) e)
 				{
+#if DEBUG
+					if(e.batch == 0)
+					{
+						Debug.Assert(currentBatch == 0);
+						int maxSize = Math.Min(e.bytes.Length, FirstHexDigitBytes.Length);
+						var expected = FirstHexDigitBytes.AsSpan(0, maxSize);
+						var actual = e.bytes.AsSpan(0, maxSize);
+						Debug.Assert(expected.SequenceEqual(actual), "The first hex digits should match.");
+					}
+#endif
 					// e.bytes.AsSpan().WriteAsHexToConsole();
 					if (!generatedHexDigitOrdered.Writer.TryWrite(e))
 						throw new UnreachableException("The bytes channel should be unbound.");
@@ -118,11 +135,12 @@ public class BBD : Method<BBD>, IMethod
 			seconds = stopwatch.Elapsed.TotalSeconds;
 			totalSeconds += seconds;
 
-			AnsiConsole.MarkupLine("[green]Final value compute time: {0:hh\\:mm\\:ss} = {1:#,###} per second[/]",
-				stopwatch.Elapsed, charCount / seconds);
-
 			decimalOutput = Task.Run(() =>
 			{
+				AnsiConsole.WriteLine();
+				AnsiConsole.MarkupLine("[green]Final value compute time: {0:hh\\:mm\\:ss} = {1:#,###} per second[/]",
+					stopwatch.Elapsed, charCount / seconds);
+
 #if DEBUG
 				// Larger than 3.15 signifies that something is wrong.
 				decimal dr = pi.ToDecimal();
@@ -262,5 +280,35 @@ public class BBD : Method<BBD>, IMethod
 		}
 
 		return result;
+	}
+
+	// A function that can take 2 characters of hex and convert them to a byte.
+	private static byte HexToByte(ReadOnlySpan<char> hex)
+	{
+		if (hex.Length != 2)
+			throw new ArgumentException("Hex string must be 2 characters long.");
+		return (byte)((GetHexValue(hex[0]) << 4) | GetHexValue(hex[1]));
+	}
+
+	private static int GetHexValue(char hex)
+	{
+		if (hex is >= '0' and <= '9')
+			return hex - '0';
+		if (hex is >= 'A' and <= 'F')
+			return hex - 'A' + 10;
+		if (hex is >= 'a' and <= 'f')
+			return hex - 'a' + 10;
+		throw new ArgumentException($"Invalid hex character: {hex}");
+	}
+
+	private static IEnumerable<byte> ConvertHexStringToBytes(string hex)
+	{
+		if(hex.Length % 2 != 0)
+			throw new ArgumentException("Hex string must have an even length.");
+
+		for (int i = 0; i < hex.Length; i += 2)
+		{
+			yield return HexToByte(hex.AsSpan(i, 2));
+		}
 	}
 }
