@@ -1,11 +1,17 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.13.35828.75 d17.13
+VisualStudioVersion = 17.13.35828.75
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolvePi", "..\source\SolvePi.csproj", "{DF5411C0-7F6B-2C31-4389-5BD61D4E953E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolvePi", "source\SolvePi.csproj", "{DF5411C0-7F6B-2C31-4389-5BD61D4E953E}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolvePi.Tests", "..\tests\SolvePi.Tests.csproj", "{109234B3-C07C-40FC-80B5-515DDB50E14B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SolvePi.Tests", "tests\SolvePi.Tests.csproj", "{109234B3-C07C-40FC-80B5-515DDB50E14B}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Files", "Solution Files", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
+	ProjectSection(SolutionItems) = preProject
+		.editorconfig = .editorconfig
+		.gitignore = .gitignore
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

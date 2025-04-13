@@ -21,13 +21,12 @@ public class BBD : Method<BBD>, IMethod
 		public Observable<Memory<byte>> HexDigits => _hexDigits;
 
 		public int ByteCount { get; private set; }
-
 		public int BatchesProcessed { get; private set; }
+		public int BatchCount { get; private set; }
 
 		private readonly Subject<int> _batchProcessed = new();
 		public Observable<int> BatchProcessed => _batchProcessed;
 
-		public int BatchCount { get; private set; }
 
 		private readonly Subject<int> _batchesQueued = new();
 		public Observable<int> BatchesQueued => _batchesQueued;
@@ -55,17 +54,17 @@ public class BBD : Method<BBD>, IMethod
 			});
 
 			var byteProcessor = _scheduler[0].Run(
-				(Func<Task<Fraction>>)(async () =>
+				async () =>
 				{
 					try
 					{
-						return await generatedHexDigitOrdered.Reader.ByteDigitsToFraction(batchSize, (Action?)(() => _batchProcessed.OnNext((int)(++this.BatchesProcessed))), CancellationToken.None);
+						return await generatedHexDigitOrdered.Reader.ByteDigitsToFraction(batchSize, () => _batchProcessed.OnNext(++BatchesProcessed), CancellationToken.None);
 					}
 					finally
 					{
 						_batchProcessed.OnCompleted();
 					}
-				}),
+				},
 				CancellationToken.None);
 
 			_ = _scheduler[2].Run(
@@ -128,7 +127,7 @@ public class BBD : Method<BBD>, IMethod
 	protected override async ValueTask ExecuteAsync(CancellationToken cancellationToken)
 	{
 		// Prepare
-		const int batchSize = 64;
+		const int batchSize = 128;
 		double seconds = 0;
 		double totalSeconds = 0;
 		Stopwatch stopwatch = new();
@@ -199,7 +198,7 @@ public class BBD : Method<BBD>, IMethod
 		totalSeconds += seconds;
 
 		AnsiConsole.WriteLine();
-		AnsiConsole.MarkupLine("[green]{0:#,###} digits per second[/]",
+		AnsiConsole.MarkupLine("[green]Average of {0:#,###} digits converted to fraction per second[/]",
 			remaining * batchSize / seconds);
 
 #if DEBUG
