@@ -99,14 +99,9 @@ public static partial class FractionExtensions
 		if (fraction == Fraction.Zero)
 			return wholePartString;
 
-		var remaining = Remaining(fraction, digits)
-			//.AsParallel()
-			//.AsOrdered()
-			;
-
 		return wholePartString
 			.Append('.')
-			.Concat(remaining);
+			.Concat(Remaining(fraction, digits));
 
 		static IEnumerable<char> Remaining(
 			Fraction fraction, int digits)
