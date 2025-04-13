@@ -13,6 +13,112 @@ public class BBD : Method<BBD>, IMethod
 	public static string Description
 		=> "Compute hexidecimal digits of π";
 
+	public class Processor(int batchSize)
+	{
+		private readonly PriorityQueueTaskScheduler _scheduler = new();
+
+		private readonly Subject<Memory<byte>> _hexDigits = new();
+		public Observable<Memory<byte>> HexDigits => _hexDigits;
+
+		public int ByteCount { get; private set; }
+
+		public int BatchesProcessed { get; private set; }
+
+		private readonly Subject<int> _batchProcessed = new();
+		public Observable<int> BatchProcessed => _batchProcessed;
+
+		public int BatchCount { get; private set; }
+
+		private readonly Subject<int> _batchesQueued = new();
+		public Observable<int> BatchesQueued => _batchesQueued;
+
+		int _started = 0;
+
+		public async Task<Task<Fraction>> RunAsync(
+			CancellationToken cancellationToken)
+		{
+			if(Interlocked.CompareExchange(ref _started, 1, 0) != 0)
+				throw new InvalidOperationException("Already started.");
+
+			var digits = new ConcurrentDictionary<int, IMemoryOwner<byte>>();
+
+			var generatedHexDigitOrdered = Channel.CreateUnbounded<(int batch, IMemoryOwner<byte> lease)>(new UnboundedChannelOptions
+			{
+				SingleWriter = true,
+				SingleReader = false
+			});
+
+			var generatedHexDigitBatches = Channel.CreateBounded<(int batch, IMemoryOwner<byte> lease)>(new BoundedChannelOptions(128)
+			{
+				SingleWriter = false,
+				SingleReader = true
+			});
+
+			var byteProcessor = _scheduler[0].Run(
+				(Func<Task<Fraction>>)(async () =>
+				{
+					try
+					{
+						return await generatedHexDigitOrdered.Reader.ByteDigitsToFraction(batchSize, (Action?)(() => _batchProcessed.OnNext((int)(++this.BatchesProcessed))), CancellationToken.None);
+					}
+					finally
+					{
+						_batchProcessed.OnCompleted();
+					}
+				}),
+				CancellationToken.None);
+
+			_ = _scheduler[2].Run(
+				() => GenerateBatches(generatedHexDigitBatches.Writer, batchSize, cancellationToken),
+				CancellationToken.None);
+
+			// Ensure batches are in order and write to the bytes channel.
+			await _scheduler[1].Run(
+				() => generatedHexDigitBatches.Reader.ReadAll(ProcessHexDigitBatch, CancellationToken.None).AsTask(),
+				CancellationToken.None);
+			generatedHexDigitOrdered.Writer.Complete();
+			_batchesQueued.OnCompleted();
+
+			return byteProcessor;
+
+			void ProcessHexDigitBatch((int batch, IMemoryOwner<byte> lease) e)
+			{
+				if (e.batch != BatchCount)
+				{
+					digits.TryAdd(e.batch, e.lease);
+					return;
+				}
+
+				var next = e.lease;
+				do
+				{
+					AcceptOrderedBatch((BatchCount, next));
+					ByteCount += batchSize;
+					_batchesQueued.OnNext(++BatchCount);
+				}
+				while (digits.TryRemove(BatchCount, out next));
+
+				void AcceptOrderedBatch((int batch, IMemoryOwner<byte> lease) e)
+				{
+					var mem = e.lease.Memory.Slice(0, batchSize);
+#if DEBUG
+					if (e.batch == 0)
+					{
+						Debug.Assert(BatchCount == 0);
+						int maxSize = Math.Min(batchSize, FirstHexDigitBytes.Length);
+						var expected = FirstHexDigitBytes.AsSpan(0, maxSize);
+						var actual = mem.Span.Slice(0, maxSize);
+						Debug.Assert(expected.SequenceEqual(actual), "The first hex digits should match.");
+					}
+#endif
+					_hexDigits.OnNext(mem);
+					if (!generatedHexDigitOrdered.Writer.TryWrite(e))
+						throw new UnreachableException("The bytes channel should be unbound.");
+				}
+			}
+		}
+	}
+
 	private const string FirstHexDigits
 		= "243F6A8885A308D313198A2E037073";
 
@@ -23,88 +129,26 @@ public class BBD : Method<BBD>, IMethod
 	{
 		// Prepare
 		const int batchSize = 64;
-		int byteCount = 0;
-		int currentBatch = 0;
 		double seconds = 0;
 		double totalSeconds = 0;
 		Stopwatch stopwatch = new();
-		var scheduler = new PriorityQueueTaskScheduler();
+		var processor = new Processor(batchSize);
+		Task<Fraction> byteProcessor = Task.FromResult(Fraction.Zero);
 
-		var generatedHexDigitOrdered = Channel.CreateUnbounded<(int batch, IMemoryOwner<byte> lease)>(new UnboundedChannelOptions
-		{
-			SingleWriter = true,
-			SingleReader = false
-		});
-
-		int batchesProcessed = 0;
-		var batchesProcessedObservable = new Subject<int>();
-
-		var byteProcessor = scheduler[0].Run(
-			() => generatedHexDigitOrdered.Reader.ByteDigitsToFraction(batchSize, () => batchesProcessedObservable.OnNext(++batchesProcessed), CancellationToken.None).AsTask(),
-			CancellationToken.None);
-
+		// Step 1: process the hex digits and return an active task that is generating the fraction.
 		await AnsiConsole.Status().Spinner(Spinner.Known.Dots).StartAsync("Starting...", async ctx =>
 		{
-			var digits = new ConcurrentDictionary<int, IMemoryOwner<byte>>();
-
-			var generatedHexDigitBatches = Channel.CreateBounded<(int batch, IMemoryOwner<byte> lease)>(new BoundedChannelOptions(128)
-			{
-				SingleWriter = false,
-				SingleReader = true
-			});
-
 			// Start
 			//AnsiConsole.Write("3.");
 			ctx.Status("Starting...");
 			await Task.Delay(500); // Allow the status to be set before we start processing.
 
+			using var _ = processor.BatchesQueued.Subscribe(
+				batch => ctx.Status($"Batch {batch:#,###}: {processor.ByteCount:#,###} bytes ({processor.ByteCount / stopwatch.Elapsed.TotalSeconds:#,###} per second)"));
+
 			stopwatch.Start();
-			_ = scheduler[2].Run(
-				() => GenerateBatches(generatedHexDigitBatches.Writer, batchSize, cancellationToken),
-				CancellationToken.None);
-
-			// Ensure batches are in order and write to the bytes channel.
-			await scheduler[1].Run(
-				() => generatedHexDigitBatches.Reader.ReadAll(ProcessHexDigitBatch, CancellationToken.None).AsTask(),
-				CancellationToken.None);
+			byteProcessor = await processor.RunAsync(cancellationToken);
 			stopwatch.Stop();
-			generatedHexDigitOrdered.Writer.Complete();
-
-			void ProcessHexDigitBatch((int batch, IMemoryOwner<byte> lease) e)
-			{
-				if (e.batch != currentBatch)
-				{
-					digits.TryAdd(e.batch, e.lease);
-					return;
-				}
-
-				var next = e.lease;
-				do
-				{
-					AcceptOrderedBatch((currentBatch, next));
-					byteCount += batchSize;
-					currentBatch++;
-					ctx.Status($"Batch {currentBatch:#,###}: {byteCount:#,###} bytes ({byteCount / stopwatch.Elapsed.TotalSeconds:#,###} per second)");
-				}
-				while (digits.TryRemove(currentBatch, out next));
-
-				void AcceptOrderedBatch((int batch, IMemoryOwner<byte> lease) e)
-				{
-#if DEBUG
-					if(e.batch == 0)
-					{
-						Debug.Assert(currentBatch == 0);
-						int maxSize = Math.Min(batchSize, FirstHexDigitBytes.Length);
-						var expected = FirstHexDigitBytes.AsSpan(0, maxSize);
-						var actual = e.lease.Memory.Span.Slice(0, maxSize);
-						Debug.Assert(expected.SequenceEqual(actual), "The first hex digits should match.");
-					}
-#endif
-					// e.bytes.AsSpan().WriteAsHexToConsole();
-					if (!generatedHexDigitOrdered.Writer.TryWrite(e))
-						throw new UnreachableException("The bytes channel should be unbound.");
-				}
-			}
 		});
 
 		AnsiConsole.WriteLine();
@@ -112,20 +156,19 @@ public class BBD : Method<BBD>, IMethod
 		seconds = stopwatch.Elapsed.TotalSeconds;
 		totalSeconds = seconds;
 
-		int charCount = currentBatch * batchSize * 2;
-		int processed = batchesProcessed;
-		int remaining = currentBatch - processed;
+		int totalBatches = processor.BatchCount;
+		int charCount = totalBatches * batchSize * 2;
+		int processed = processor.BatchesProcessed;
+		int remaining = totalBatches - processed;
 
-		{
-			AnsiConsole.WriteLine();
-			AnsiConsole.MarkupLine(
-				"[green]Completed {0:#,###} hex digits of π in {1:#,###} seconds = {2:#,###} per second[/]",
-				charCount, seconds, charCount / seconds);
+		AnsiConsole.WriteLine();
+		AnsiConsole.MarkupLine(
+			"[green]Completed {0:#,###} hex digits of π in {1:#,###} seconds = {2:#,###} per second[/]",
+			charCount, seconds, charCount / seconds);
 
-			AnsiConsole.MarkupLine(
-				"[cyan]Already processed {0:#,###} of {1:#,###} total batches.[/]",
-				processed, currentBatch);
-		}
+		AnsiConsole.MarkupLine(
+			"[cyan]Already processed {0:#,###} of {1:#,###} total batches.[/]",
+			processed, totalBatches);
 
 		Fraction pi = 3;
 		await AnsiConsole
@@ -145,14 +188,12 @@ public class BBD : Method<BBD>, IMethod
 				task.MaxValue = remaining;
 
 				stopwatch.Restart();
-				using var _ = batchesProcessedObservable.Subscribe(
+				using var _ = processor.BatchProcessed.Subscribe(
 					batch => task.Value = batch - processed);
 
 				pi = 3 + await byteProcessor;
 				stopwatch.Stop();
 			});
-
-		batchesProcessedObservable.OnCompleted();
 
 		seconds = stopwatch.Elapsed.TotalSeconds;
 		totalSeconds += seconds;
@@ -176,7 +217,7 @@ public class BBD : Method<BBD>, IMethod
 		using var output = new Subject<char>();
 		using var stream = File.OpenWrite($"pi.decimal.{DateTime.Now:yyyyMMddHHmmss}.txt");
 		using var writer = new StreamWriter(stream);
-		using var chunky = output.Chunk(80).Subscribe(chunk=>
+		using var chunky = output.Chunk(80).Subscribe(chunk =>
 		{
 			writer.Write(chunk);
 			AnsiConsole.Write(chunk);
@@ -184,7 +225,7 @@ public class BBD : Method<BBD>, IMethod
 
 		stopwatch.Restart();
 		long total = pi
-			.ToDecimalChars(byteCount * 2)
+			.ToDecimalChars(processor.ByteCount * 2)
 			.PreCache(640, CancellationToken.None)
 			.PublishTo(output) - 2;
 		stopwatch.Stop();
@@ -198,6 +239,7 @@ public class BBD : Method<BBD>, IMethod
 			"[green]Converted {0:#,###} decimal digits of π in {1:#,###} seconds = {2:#,###} per second[/]",
 			total, seconds, total / seconds);
 		AnsiConsole.WriteLine("{0:#,###} total seconds", totalSeconds);
+
 	}
 
 	protected static Task GenerateBatches(
