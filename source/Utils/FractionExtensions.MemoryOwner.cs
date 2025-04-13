@@ -61,7 +61,7 @@ public static partial class FractionExtensions
 
 	public static async ValueTask<Fraction> ByteDigitsToFraction(
 		this ChannelReader<(int batch, IMemoryOwner<byte> lease)> bytes,
-		int expectedBatchSize,
+		int expectedBatchSize, Action? onBatchProcessed = null,
 		CancellationToken cancellationToken = default)
 	{
 		var result = Fraction.Zero;
@@ -84,7 +84,11 @@ public static partial class FractionExtensions
 			// Pipe the results in parallel to another channel.
 			.Pipe(Environment.ProcessorCount, sum => sum, singleReader: true, cancellationToken: cancellationToken)
 			// Read the resultant values one at a time and create a sum.
-			.ReadAll(sum => result += sum, cancellationToken);
+			.ReadAll(sum =>
+			{
+				result += sum;
+				onBatchProcessed?.Invoke();
+			}, cancellationToken);
 
 		return result.Reduce();
 	}
@@ -104,5 +108,4 @@ public static partial class FractionExtensions
 
 		return result.Reduce();
 	}
-
 }

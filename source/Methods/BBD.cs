@@ -1,4 +1,5 @@
 ﻿using Open.Collections;
+using R3;
 using SolvePi.Utils.TaskScheduling;
 using System.Collections.Immutable;
 
@@ -22,12 +23,28 @@ public class BBD : Method<BBD>, IMethod
 	{
 		// Prepare
 		const int batchSize = 64;
+		int byteCount = 0;
+		int currentBatch = 0;
+		double seconds = 0;
+		double totalSeconds = 0;
+		Stopwatch stopwatch = new();
+		var scheduler = new PriorityQueueTaskScheduler();
 
-		Task decimalOutput = Task.CompletedTask;
+		var generatedHexDigitOrdered = Channel.CreateUnbounded<(int batch, IMemoryOwner<byte> lease)>(new UnboundedChannelOptions
+		{
+			SingleWriter = true,
+			SingleReader = false
+		});
+
+		int batchesProcessed = 0;
+		var batchesProcessedObservable = new Subject<int>();
+
+		var byteProcessor = scheduler[0].Run(
+			() => generatedHexDigitOrdered.Reader.ByteDigitsToFraction(batchSize, () => batchesProcessedObservable.OnNext(++batchesProcessed), CancellationToken.None).AsTask(),
+			CancellationToken.None);
+
 		await AnsiConsole.Status().Spinner(Spinner.Known.Dots).StartAsync("Starting...", async ctx =>
 		{
-			int byteCount = 0;
-			int currentBatch = 0;
 			var digits = new ConcurrentDictionary<int, IMemoryOwner<byte>>();
 
 			var generatedHexDigitBatches = Channel.CreateBounded<(int batch, IMemoryOwner<byte> lease)>(new BoundedChannelOptions(128)
@@ -36,24 +53,12 @@ public class BBD : Method<BBD>, IMethod
 				SingleReader = true
 			});
 
-			var generatedHexDigitOrdered = Channel.CreateUnbounded<(int batch, IMemoryOwner<byte> lease)>(new UnboundedChannelOptions
-			{
-				SingleWriter = true,
-				SingleReader = false
-			});
-
 			// Start
 			//AnsiConsole.Write("3.");
 			ctx.Status("Starting...");
 			await Task.Delay(500); // Allow the status to be set before we start processing.
 
-			var scheduler = new PriorityQueueTaskScheduler();
-
-			var byteProcessor = scheduler[0].Run(
-				() => generatedHexDigitOrdered.Reader.ByteDigitsToFraction(batchSize, CancellationToken.None).AsTask(),
-				CancellationToken.None);
-
-			var stopwatch = Stopwatch.StartNew();
+			stopwatch.Start();
 			_ = scheduler[2].Run(
 				() => GenerateBatches(generatedHexDigitBatches.Writer, batchSize, cancellationToken),
 				CancellationToken.None);
@@ -63,6 +68,7 @@ public class BBD : Method<BBD>, IMethod
 				() => generatedHexDigitBatches.Reader.ReadAll(ProcessHexDigitBatch, CancellationToken.None).AsTask(),
 				CancellationToken.None);
 			stopwatch.Stop();
+			generatedHexDigitOrdered.Writer.Complete();
 
 			void ProcessHexDigitBatch((int batch, IMemoryOwner<byte> lease) e)
 			{
@@ -99,80 +105,99 @@ public class BBD : Method<BBD>, IMethod
 						throw new UnreachableException("The bytes channel should be unbound.");
 				}
 			}
+		});
 
-			ctx.Status("Stopped hex proccessing.");
-			generatedHexDigitOrdered.Writer.Complete();
-			AnsiConsole.WriteLine();
+		AnsiConsole.WriteLine();
 
-			int charCount = currentBatch * batchSize * 2;
+		seconds = stopwatch.Elapsed.TotalSeconds;
+		totalSeconds = seconds;
 
-			double seconds = stopwatch.Elapsed.TotalSeconds;
-			double totalSeconds = seconds;
+		int charCount = currentBatch * batchSize * 2;
+		int processed = batchesProcessed;
+		int remaining = currentBatch - processed;
 
+		{
 			AnsiConsole.WriteLine();
 			AnsiConsole.MarkupLine(
 				"[green]Completed {0:#,###} hex digits of π in {1:#,###} seconds = {2:#,###} per second[/]",
 				charCount, seconds, charCount / seconds);
 
-			ctx.Status("Computing final value...");
-			stopwatch.Restart();
-			bool computing = true;
-			_ = Task.Run(() =>
+			AnsiConsole.MarkupLine(
+				"[cyan]Already processed {0:#,###} of {1:#,###} total batches.[/]",
+				processed, currentBatch);
+		}
+
+		Fraction pi = 3;
+		await AnsiConsole
+			.Progress()
+			.Columns(
+			[
+				new SpinnerColumn(),            // Spinner
+				new TaskDescriptionColumn(),    // Task description
+				new ProgressBarColumn(),        // Progress bar
+				new PercentageColumn(),         // Percentage
+				new ElapsedTimeColumn(),		// Elapsed time
+				new RemainingTimeColumn(),      // Remaining time
+			])
+			.StartAsync(async ctx =>
 			{
-				// Update elapsed status while processing.
-				while (computing)
-				{
-					// Show elapsed time as 0:00:00.
-					ctx.Status($"Computing final value. Elaspsed: {stopwatch.Elapsed:hh\\:mm\\:ss}");
-					Task.Delay(500);
-				}
-			});
-
-			Fraction pi = 3 + await byteProcessor;
-			computing = false;
-			stopwatch.Stop();
-
-			seconds = stopwatch.Elapsed.TotalSeconds;
-			totalSeconds += seconds;
-
-			decimalOutput = Task.Run(() =>
-			{
-				AnsiConsole.WriteLine();
-				AnsiConsole.MarkupLine("[green]Final value compute time: {0:hh\\:mm\\:ss} = {1:#,###} per second[/]",
-					stopwatch.Elapsed, charCount / seconds);
-
-#if DEBUG
-				// Larger than 3.15 signifies that something is wrong.
-				decimal dr = pi.ToDecimal();
-				if (dr > 3.15m)
-				{
-					AnsiConsole.MarkupLine("[red]The result was greater than 3.15: {0}[/]", dr);
-					return;
-				}
-#endif
-				AnsiConsole.WriteLine();
-				AnsiConsole.MarkupLine("[cyan]Decimal Conversion:[/]");
+				var task = ctx.AddTask($"[cyan]Remaining {remaining:#,###} batches[/]");
+				task.MaxValue = remaining;
 
 				stopwatch.Restart();
-				long total = pi
-					.ToDecimalChars(byteCount * 2)
-					.PreCache(640, CancellationToken.None)
-					.WriteToConsole() - 2;
+				using var _ = batchesProcessedObservable.Subscribe(
+					batch => task.Value = batch - processed);
+
+				pi = 3 + await byteProcessor;
 				stopwatch.Stop();
-
-				seconds = stopwatch.Elapsed.TotalSeconds;
-				totalSeconds += seconds;
-
-				AnsiConsole.WriteLine(); // End of digits.
-				AnsiConsole.WriteLine(); // Spacer.
-				AnsiConsole.MarkupLine(
-					"[green]Converted {0:#,###} decimal digits of π in {1:#,###} seconds = {2:#,###} per second[/]",
-					total, seconds, total / seconds);
-				AnsiConsole.WriteLine("{0:#,###} total seconds", totalSeconds);
 			});
+
+		batchesProcessedObservable.OnCompleted();
+
+		seconds = stopwatch.Elapsed.TotalSeconds;
+		totalSeconds += seconds;
+
+		AnsiConsole.WriteLine();
+		AnsiConsole.MarkupLine("[green]{0:#,###} digits per second[/]",
+			remaining * batchSize / seconds);
+
+#if DEBUG
+		// Larger than 3.15 signifies that something is wrong.
+		decimal dr = pi.ToDecimal();
+		if (dr > 3.15m)
+		{
+			AnsiConsole.MarkupLine("[red]The result was greater than 3.15: {0}[/]", dr);
+			return;
+		}
+#endif
+		AnsiConsole.WriteLine();
+		AnsiConsole.MarkupLine("[cyan]Decimal Conversion:[/]");
+
+		using var output = new Subject<char>();
+		using var stream = File.OpenWrite($"pi.decimal.{DateTime.Now:yyyyMMddHHmmss}.txt");
+		using var writer = new StreamWriter(stream);
+		using var chunky = output.Chunk(80).Subscribe(chunk=>
+		{
+			writer.Write(chunk);
+			AnsiConsole.Write(chunk);
 		});
 
-		await decimalOutput;
+		stopwatch.Restart();
+		long total = pi
+			.ToDecimalChars(byteCount * 2)
+			.PreCache(640, CancellationToken.None)
+			.PublishTo(output) - 2;
+		stopwatch.Stop();
+
+		seconds = stopwatch.Elapsed.TotalSeconds;
+		totalSeconds += seconds;
+
+		AnsiConsole.WriteLine(); // End of digits.
+		AnsiConsole.WriteLine(); // Spacer.
+		AnsiConsole.MarkupLine(
+			"[green]Converted {0:#,###} decimal digits of π in {1:#,###} seconds = {2:#,###} per second[/]",
+			total, seconds, total / seconds);
+		AnsiConsole.WriteLine("{0:#,###} total seconds", totalSeconds);
 	}
 
 	protected static Task GenerateBatches(

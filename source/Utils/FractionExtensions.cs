@@ -1,4 +1,5 @@
 ﻿using Nito.AsyncEx;
+using R3;
 using System.Runtime.CompilerServices;
 
 namespace SolvePi.Utils;
@@ -141,6 +142,19 @@ public static partial class FractionExtensions
 		}
 
 		return target;
+	}
+
+	public static long PublishTo(
+		this IEnumerable<char> chars, Subject<char> observer)
+	{
+		long total = 0;
+		foreach (char b in chars)
+		{
+			observer.OnNext(b);
+			total++;
+		}
+
+		return total;
 	}
 
 	public static long WriteToConsole(
