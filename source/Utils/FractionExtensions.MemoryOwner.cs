@@ -1,10 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿namespace SolvePi.Utils;
 
-namespace SolvePi.Utils;
 public static partial class FractionExtensions
 {
 	public static async ValueTask<Fraction> ByteDigitsToFraction(

@@ -1,6 +1,4 @@
-﻿using SolvePi.Methods;
-
-namespace SolvePi;
+﻿namespace SolvePi;
 
 public interface IMethod
 {

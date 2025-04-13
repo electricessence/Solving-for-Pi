@@ -28,15 +28,15 @@ public class BBD : Method<BBD>, IMethod
 		{
 			int byteCount = 0;
 			int currentBatch = 0;
-			var digits = new ConcurrentDictionary<int, byte[]>();
+			var digits = new ConcurrentDictionary<int, IMemoryOwner<byte>>();
 
-			var generatedHexDigitBatches = Channel.CreateBounded<(int batch, byte[] bytes)>(new BoundedChannelOptions(128)
+			var generatedHexDigitBatches = Channel.CreateBounded<(int batch, IMemoryOwner<byte> lease)>(new BoundedChannelOptions(128)
 			{
 				SingleWriter = false,
 				SingleReader = true
 			});
 
-			var generatedHexDigitOrdered = Channel.CreateUnbounded<(int batch, byte[] bytes)>(new UnboundedChannelOptions
+			var generatedHexDigitOrdered = Channel.CreateUnbounded<(int batch, IMemoryOwner<byte> lease)>(new UnboundedChannelOptions
 			{
 				SingleWriter = true,
 				SingleReader = false
@@ -64,15 +64,15 @@ public class BBD : Method<BBD>, IMethod
 				CancellationToken.None);
 			stopwatch.Stop();
 
-			void ProcessHexDigitBatch((int batch, byte[] bytes) e)
+			void ProcessHexDigitBatch((int batch, IMemoryOwner<byte> lease) e)
 			{
 				if (e.batch != currentBatch)
 				{
-					digits.TryAdd(e.batch, e.bytes);
+					digits.TryAdd(e.batch, e.lease);
 					return;
 				}
 
-				byte[]? next = e.bytes;
+				var next = e.lease;
 				do
 				{
 					AcceptOrderedBatch((currentBatch, next));
@@ -82,15 +82,15 @@ public class BBD : Method<BBD>, IMethod
 				}
 				while (digits.TryRemove(currentBatch, out next));
 
-				void AcceptOrderedBatch((int batch, byte[] bytes) e)
+				void AcceptOrderedBatch((int batch, IMemoryOwner<byte> lease) e)
 				{
 #if DEBUG
 					if(e.batch == 0)
 					{
 						Debug.Assert(currentBatch == 0);
-						int maxSize = Math.Min(e.bytes.Length, FirstHexDigitBytes.Length);
+						int maxSize = Math.Min(batchSize, FirstHexDigitBytes.Length);
 						var expected = FirstHexDigitBytes.AsSpan(0, maxSize);
-						var actual = e.bytes.AsSpan(0, maxSize);
+						var actual = e.lease.Memory.Span.Slice(0, maxSize);
 						Debug.Assert(expected.SequenceEqual(actual), "The first hex digits should match.");
 					}
 #endif
@@ -176,7 +176,7 @@ public class BBD : Method<BBD>, IMethod
 	}
 
 	protected static Task GenerateBatches(
-		ChannelWriter<(int batch, byte[] bytes)> writer,
+		ChannelWriter<(int batch, IMemoryOwner<byte> lease)> writer,
 		int batchSize,
 		CancellationToken cancellationToken)
 		=> Parallel
@@ -184,22 +184,22 @@ public class BBD : Method<BBD>, IMethod
 				0, int.MaxValue / batchSize,
 				cancellationToken, async (i, _) =>
 				{
-					byte[] bytes = new byte[batchSize];
+					var lease = MemoryPool<byte>.Shared.Rent(batchSize);
 					{
 						int offset = i * batchSize;
-						Span<byte> span = bytes.AsSpan();
+						Span<byte> span = lease.Memory.Span;
 						for (int j = 0; j < batchSize; j++)
 						{
 							span[j] = GetHexByteOfPi(offset + j);
 						}
 					}
 
-					if (writer.TryWrite((i, bytes)))
+					if (writer.TryWrite((i, lease)))
 					{
 						return;
 					}
 
-					await writer.WriteAsync((i, bytes), CancellationToken.None);
+					await writer.WriteAsync((i, lease), CancellationToken.None);
 				})
 			.ContinueWith(_ => writer.Complete(), CancellationToken.None);
 

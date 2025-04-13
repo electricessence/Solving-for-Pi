@@ -1,10 +1,4 @@
-﻿using System.Numerics;
-using System.Threading.Channels;
-using System.Collections.Concurrent;
-using Open.Collections;
-using Spectre.Console;
-
-namespace SolvePi.Methods;
+﻿namespace SolvePi.Methods;
 
 public class MonteCarlo : Method<MonteCarlo>, IMethod
 {

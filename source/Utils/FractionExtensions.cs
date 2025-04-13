@@ -1,6 +1,5 @@
 ﻿using Nito.AsyncEx;
 using System.Runtime.CompilerServices;
-using System.Threading;
 
 namespace SolvePi.Utils;
 
@@ -100,9 +99,14 @@ public static partial class FractionExtensions
 		if (fraction == Fraction.Zero)
 			return wholePartString;
 
+		var remaining = Remaining(fraction, digits)
+			//.AsParallel()
+			//.AsOrdered()
+			;
+
 		return wholePartString
 			.Append('.')
-			.Concat(Remaining(fraction, digits));
+			.Concat(remaining);
 
 		static IEnumerable<char> Remaining(
 			Fraction fraction, int digits)
