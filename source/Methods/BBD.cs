@@ -11,7 +11,7 @@ public class BBD : Method<BBD>, IMethod
 		=> "Bailey-Borwein-Plouffe (BBD)";
 
 	public static string Description
-		=> "Compute hexidecimal digits of π";
+		=> "Compute using hexidecimal digits of π";
 
 	public class Processor(int batchSize)
 	{
