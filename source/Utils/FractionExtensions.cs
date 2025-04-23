@@ -9,7 +9,7 @@ public static partial class FractionExtensions
 	static readonly Fraction DefaultPrecision = new(1, 10000000000);
 	public static Fraction SquareRoot(
 		this Fraction value,
-		Fraction? precision = default)
+		Fraction? precision)
 	{
 		Fraction x = value;
 		Fraction y = 1;
