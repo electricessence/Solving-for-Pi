@@ -83,4 +83,45 @@ internal static class CollectionExtensions
 			break;
 		}
 	}
+
+	public static IEnumerable<T> WhileSame<T>(this IEnumerable<T> first, IEnumerable<T> second)
+
+	{
+		using var e1 = first.GetEnumerator();
+		using var e2 = second.GetEnumerator();
+		while (e1.MoveNext())
+		{
+			if (!e2.MoveNext())
+			{
+				yield break;
+			}
+
+			var item1 = e1.Current;
+			var item2 = e2.Current;
+
+			if (item1 is null)
+			{
+				if (item2 is null)
+				{
+					yield return item1;
+					continue;
+				}
+
+				yield break;
+			}
+
+			if (item2 is null)
+			{
+				yield break;
+			}
+
+			if (item1.Equals(item2))
+			{
+				yield return item1;
+				continue;
+			}
+
+			yield break;
+		}
+	}
 }

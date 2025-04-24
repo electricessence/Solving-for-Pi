@@ -120,6 +120,10 @@ public static partial class FractionExtensions
 		}
 	}
 
+	public static IEnumerable<char> ToDecimalChars(
+		this Fraction fraction)
+		=> ToDecimalChars(fraction, int.MaxValue);
+
 	public static ReadOnlySpan<char> ToDecimalChars(
 		this Fraction fraction, Span<char> target)
 	{
